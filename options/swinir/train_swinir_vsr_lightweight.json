@@ -17,8 +17,8 @@
     "train": {
       "name": "train_dataset"           // just name
       , "dataset_type": "vsr"         // "dncnn" | "dnpatch" | "fdncnn" | "ffdnet" | "sr" | "srmd" | "dpsr" | "plain" | "plainpatch" | "jpeg"
-      , "dataroot_H": "dataset/REDS/train/HR"// path of H training dataset. DIV2K (800 training images)
-      , "dataroot_L": "dataset/REDS/train/LR_bicubic"              // path of L training dataset
+      , "dataroot_H": "dataset/REDS/train/HR+dataset/REDS/val/HR"  // path of H training dataset. DIV2K (800 training images)
+      , "dataroot_L": "dataset/REDS/train/LR_bicubic+dataset/REDS/val/LR_bicubic"  // path of L training dataset
 
       , "H_size": 64                   // 128/192/256/512.
 
@@ -29,8 +29,8 @@
     , "test": {
       "name": "test_dataset"            // just name
       , "dataset_type": "vsr"         // "dncnn" | "dnpatch" | "fdncnn" | "ffdnet" | "sr" | "srmd" | "dpsr" | "plain" | "plainpatch" | "jpeg"
-      , "dataroot_H": "dataset/REDS/val/HR"  // path of H testing dataset
-      , "dataroot_L": "dataset/REDS/val/LR_bicubic"              // path of L testing dataset
+      , "dataroot_H": "dataset/REDS/train/HR+dataset/REDS/val/HR"  // path of H testing dataset
+      , "dataroot_L": "dataset/REDS/train/LR_bicubic+dataset/REDS/val/LR_bicubic" // path of L testing dataset
 
     }
   }

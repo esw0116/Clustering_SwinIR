@@ -15,6 +15,10 @@ class DatasetVSR(data.Dataset):
         self.scale = [opt['scale']] if opt['scale'] else [4]
         self.n_frames = opt['n_frames'] if opt['n_frames'] else 5
         self.patch_size = self.opt['H_size'] if self.opt['H_size'] else 96
+
+        self.train_hr, self.test_hr = opt['dataroot_H'].split('+')
+        self.train_lr, self.test_lr = opt['dataroot_L'].split('+')
+
         self.images_hr, self.images_lr = self._scan()
         
         if self.train:
@@ -26,26 +30,64 @@ class DatasetVSR(data.Dataset):
                 self.repeat = max(n_patches // n_images, 1)
 
     def _scan(self):
-        names_hr = sorted(
-            glob.glob(os.path.join(self.opt['dataroot_H'], '*', '*.png'))
-        )
-        names_lr = [[] for _ in self.scale]
-        for si, s in enumerate(self.scale):
-            if s == 1:
-                names_lr[si]=names_hr
+        # Made for REDS4 validation
 
-            else:
-                for i, f in enumerate(names_hr):
-                    filename, _ = os.path.splitext(os.path.basename(f))
-                    foldername = os.path.basename(os.path.dirname(f))
+        dir_hr_train = sorted(glob.glob(self.train_hr+'/*'))
+        dir_hr_test = [k for k in dir_hr_train if k.find('000') >= 0 or k.find('011') >= 0 or k.find('015') >= 0 or k.find('020') >= 0]
+        for x in dir_hr_test:
+            dir_hr_train.remove(x)
 
-                    f_list = sorted(glob.glob(os.path.join(self.opt['dataroot_L'], 'X{}'.format(s), foldername, '*')))
-                    select_idx = util.index_generation(int(filename), len(f_list), self.n_frames,
-                                            padding='new_info')
-                    lr_list = [f_list[i] for i in select_idx]
-                    names_lr[si].append(lr_list)
-                    
-        return names_hr, names_lr
+        if not self.train:
+            names_hr = []
+            for i in dir_hr_test:
+                names_hr.extend(sorted(glob.glob(os.path.join(i, '*.png'))))
+
+            names_lr = []
+            for i, f in enumerate(names_hr):
+                filename, _ = os.path.splitext(os.path.basename(f))
+                foldername = os.path.basename(os.path.dirname(f))
+
+                f_list = sorted(glob.glob(os.path.join(self.train_lr, 'X{}'.format(self.scale), foldername, '*')))
+                select_idx = util.index_generation(int(filename), len(f_list), self.n_frames,
+                                        padding='new_info')
+                lr_list = [f_list[i] for i in select_idx]
+                names_lr.append(lr_list)
+            
+            return names_hr, names_lr
+
+        else:
+            names_hr = []
+            for i in dir_hr_train:
+                names_hr.extend(sorted(glob.glob(os.path.join(i, '*.png'))))
+
+            names_lr = []
+            for i, f in enumerate(names_hr):
+                filename, _ = os.path.splitext(os.path.basename(f))
+                foldername = os.path.basename(os.path.dirname(f))
+
+                f_list = sorted(glob.glob(os.path.join(self.train_lr, 'X{}'.format(self.scale), foldername, '*')))
+                select_idx = util.index_generation(int(filename), len(f_list), self.n_frames,
+                                        padding='new_info')
+                lr_list = [f_list[i] for i in select_idx]
+                names_lr.append(lr_list)
+            
+            dir_hr_train = sorted(glob.glob(self.test_hr+'/*'))
+            names_hr2 = []
+            for i in dir_hr_train:
+                names_hr2.extend(sorted(glob.glob(os.path.join(i, '*.png'))))
+            names_hr.extend(names_hr2)
+
+            for i, f in enumerate(names_hr2):
+                filename, _ = os.path.splitext(os.path.basename(f))
+                foldername = os.path.basename(os.path.dirname(f))
+
+                f_list = sorted(glob.glob(os.path.join(self.test_lr, 'X{}'.format(self.scale), foldername, '*')))
+                select_idx = util.index_generation(int(filename), len(f_list), self.n_frames,
+                                        padding='new_info')
+                lr_list = [f_list[i] for i in select_idx]
+                names_lr.append(lr_list)
+
+            return names_hr, names_lr
 
     def _check_and_load(self, ext, img, f, verbose=True):
         if not os.path.isfile(f) or ext.find('reset') >= 0:
@@ -97,29 +139,13 @@ class DatasetVSR(data.Dataset):
         idx = self._get_index(idx)
     
         f_hr = self.images_hr[idx]
-        f_lr = self.images_lr[0][idx]
+        f_lr = self.images_lr[idx]
 
         filename, _ = os.path.splitext(os.path.basename(f_hr))
         hr = imageio.imread(f_hr)
         lr = []
         for f in f_lr:
             lr.append(imageio.imread(f))
-        return lr, hr, filename
-    
-    def _load_file_deblur(self, idx, train = True):
-        idx = self._get_index(idx)
-        if train:
-            f_hr = self.images_hr[idx]
-            f_lr = self.images_lr[idx]
-        else:
-            f_hr = self.deblur_hr_test[idx]
-            f_lr = self.deblur_lr_test[idx]
-        
-        filename, _ = os.path.splitext(os.path.basename(f_hr))
-        filename = f_hr[-27:-17] + filename
-        hr = imageio.imread(f_hr)
-        lr = imageio.imread(f_lr)
-
         return lr, hr, filename
 
     def get_patch_hr(self, hr):
