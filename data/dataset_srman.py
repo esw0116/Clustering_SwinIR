@@ -32,8 +32,8 @@ class DatasetSR(data.Dataset):
             self.paths_H = util.get_image_paths(os.path.join(DATASET_PATH, 'train/DIV2K/bin/DIV2K_train_HR'))
             self.paths_L = util.get_image_paths(os.path.join(DATASET_PATH, 'train/DIV2K/bin/DIV2K_train_LR_bicubic', 'X{}'.format(str(opt['scale']))))
         else:
-            self.paths_H = util.get_image_paths(os.path.join(DATASET_PATH, 'train/benchmark/Set5/HR'))
-            self.paths_L = util.get_image_paths(os.path.join(DATASET_PATH, 'train/benchmark/Set5/LR_bicubic', 'X{}'.format(str(opt['scale']))))
+            self.paths_H = util.get_image_paths(os.path.join(DATASET_PATH, 'train/benchmark/manga109/HR'))
+            self.paths_L = util.get_image_paths(os.path.join(DATASET_PATH, 'train/benchmark/manga109/LR_bicubic', 'X{}'.format(str(opt['scale']))))
 
         assert self.paths_H, 'Error: H path is empty.'
         if self.paths_L and self.paths_H:
@@ -64,6 +64,8 @@ class DatasetSR(data.Dataset):
             L_path = self.paths_L[index]
             img_L = util.imread_uint(L_path, self.n_channels)
             img_L = util.uint2single(img_L)
+            h, w = img_L.shape[:2]
+            img_H = img_H[:self.sf*h, :self.sf*w]
 
         else:
             # --------------------------------

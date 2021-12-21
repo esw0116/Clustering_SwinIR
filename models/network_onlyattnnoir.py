@@ -86,8 +86,8 @@ class WindowAttention(nn.Module):
         self.scale = qk_scale or head_dim ** -0.5
 
         # define a parameter table of relative position bias
-        self.relative_position_bias_table = nn.Parameter(
-            torch.zeros((2 * window_size[0] - 1) * (2 * window_size[1] - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
+        # self.relative_position_bias_table = nn.Parameter(
+            # torch.zeros((2 * window_size[0] - 1) * (2 * window_size[1] - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
 
         # get pair-wise relative position index for each token inside the window
         coords_h = torch.arange(self.window_size[0])
@@ -108,7 +108,7 @@ class WindowAttention(nn.Module):
 
         self.proj_drop = nn.Dropout(proj_drop)
 
-        trunc_normal_(self.relative_position_bias_table, std=.02)
+        # trunc_normal_(self.relative_position_bias_table, std=.02)
         self.softmax = nn.Softmax(dim=-1)
 
     def forward(self, x, mask=None):
@@ -124,14 +124,16 @@ class WindowAttention(nn.Module):
         q = q * self.scale
         attn = (q @ k.transpose(-2, -1))
 
-        relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
-            self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
-        relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
-        attn = attn + relative_position_bias.unsqueeze(0)
+        # relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
+        #     self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
+        # relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
+        # attn = relative_position_bias.unsqueeze(0).expand(B_, -1, -1, -1)
 
         if mask is not None:
             nW = mask.shape[0]
+            # print('B: ',attn.shape)
             attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
+            # print('C: ',attn.shape)
             attn = attn.view(-1, self.num_heads, N, N)
             attn = self.softmax(attn)
         else:
@@ -380,7 +382,7 @@ class BasicLayer(nn.Module):
         self.blocks = nn.ModuleList([
             SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
                                  num_heads=num_heads, window_size=window_size,
-                                 shift_size=0 if (i % 2 == 0) else window_size // 2,
+                                 shift_size=0,
                                  mlp_ratio=mlp_ratio,
                                  qkv_bias=qkv_bias, qk_scale=qk_scale,
                                  drop=drop, attn_drop=attn_drop,

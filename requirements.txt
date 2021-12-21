@@ -1,0 +1,8 @@
+#nsml: junsukchoe/backbone:cu92_torch171
+
+imageio
+opencv-contrib-python
+scikit-image
+pillow
+hdf5storage
+ninja

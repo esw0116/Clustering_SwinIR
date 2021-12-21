@@ -3,7 +3,9 @@ import math
 import random
 import numpy as np
 import torch
-import cv2
+import imageio
+import pickle
+# import cv2
 from torchvision.utils import make_grid
 from datetime import datetime
 # import torchvision.transforms as transforms
@@ -23,7 +25,7 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 '''
 
 
-IMG_EXTENSIONS = ['.jpg', '.JPG', '.jpeg', '.JPEG', '.png', '.PNG', '.ppm', '.PPM', '.bmp', '.BMP', '.tif']
+IMG_EXTENSIONS = ['.jpg', '.JPG', '.jpeg', '.JPEG', '.png', '.PNG', '.ppm', '.PPM', '.bmp', '.BMP', '.tif', 'pt']
 
 
 def is_image_file(filename):
@@ -308,20 +310,42 @@ def mkdir_and_rename(path):
 # --------------------------------------------
 # get uint8 image of size HxWxn_channles (RGB)
 # --------------------------------------------
+# def imread_uint(path, n_channels=3):
+#     #  input: path
+#     # output: HxWx3(RGB or GGG), or HxWx1 (G)
+#     if n_channels == 1:
+#         img = cv2.imread(path, 0)  # cv2.IMREAD_GRAYSCALE
+#         img = np.expand_dims(img, axis=2)  # HxWx1
+#     elif n_channels == 3:
+#         img = cv2.imread(path, cv2.IMREAD_UNCHANGED)  # BGR or G
+#         if img.ndim == 2:
+#             img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)  # GGG
+#         else:
+#             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # RGB
+#     return img
 def imread_uint(path, n_channels=3):
     #  input: path
     # output: HxWx3(RGB or GGG), or HxWx1 (G)
+    # print(os.path.splitext(path))
     if n_channels == 1:
-        img = cv2.imread(path, 0)  # cv2.IMREAD_GRAYSCALE
+        if os.path.splitext(path)[1] == '.pt':
+            with open(path, 'rb') as path_:
+                img = pickle.load(path_)
+        else:
+            img = imageio.imread(path)  # cv2.IMREAD_GRAYSCALE
         img = np.expand_dims(img, axis=2)  # HxWx1
     elif n_channels == 3:
-        img = cv2.imread(path, cv2.IMREAD_UNCHANGED)  # BGR or G
-        if img.ndim == 2:
-            img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)  # GGG
+        if os.path.splitext(path)[1] == '.pt':
+            with open(path, 'rb') as path_:
+                img = pickle.load(path_)
         else:
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # RGB
+            img = imageio.imread(path)  # BGR or G
+        if img.ndim == 2:
+            img = np.expand_dims(img, axis=2)
+            img = np.concatenate([img, img, img], axis=2)  # GGG
+        else:
+            pass
     return img
-
 
 # --------------------------------------------
 # matlab's imwrite
@@ -745,7 +769,7 @@ def channel_convert(in_c, tar_type, img_list):
 # --------------------------------------------
 # PSNR
 # --------------------------------------------
-def calculate_psnr(img1, img2, border=0):
+def calculate_psnr(img1, img2, border=0, y_psnr=True):
     # img1 and img2 have range [0, 255]
     #img1 = img1.squeeze()
     #img2 = img2.squeeze()
@@ -757,11 +781,16 @@ def calculate_psnr(img1, img2, border=0):
 
     img1 = img1.astype(np.float64)
     img2 = img2.astype(np.float64)
+
+    if y_psnr and img1.shape[-1] > 1:
+        gray_coeffs = np.array([65.738, 129.057, 25.064]) / 256
+        img1 = np.sum(img1 * gray_coeffs, axis=-1)
+        img2 = np.sum(img2 * gray_coeffs, axis=-1)
+
     mse = np.mean((img1 - img2)**2)
     if mse == 0:
-        return float('inf')
+        return 99.9 # float('inf')
     return 20 * math.log10(255.0 / math.sqrt(mse))
-
 
 # --------------------------------------------
 # SSIM

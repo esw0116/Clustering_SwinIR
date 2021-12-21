@@ -117,6 +117,12 @@ def parse(opt_path, is_train=True):
         opt['train']['F_use_range_norm'] = False
 
     # ----------------------------------------
+    # default setting for total iterations
+    # ----------------------------------------
+    if 'total_iters' not in opt['train']:
+        opt['train']['total_iters'] = 500000
+
+    # ----------------------------------------
     # default setting for optimizer
     # ----------------------------------------
     if 'G_optimizer_reuse' not in opt['train']:

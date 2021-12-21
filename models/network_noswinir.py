@@ -313,11 +313,11 @@ class PatchMerging(nn.Module):
         self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
         self.norm = norm_layer(4 * dim)
 
-    def forward(self, x, x_size):
+    def forward(self, x):
         """
         x: B, H*W, C
         """
-        H, W = x_size
+        H, W = self.input_resolution
         B, L, C = x.shape
         assert L == H * W, "input feature has wrong size"
         assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
@@ -380,7 +380,7 @@ class BasicLayer(nn.Module):
         self.blocks = nn.ModuleList([
             SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
                                  num_heads=num_heads, window_size=window_size,
-                                 shift_size=0 if (i % 2 == 0) else window_size // 2,
+                                 shift_size=0,
                                  mlp_ratio=mlp_ratio,
                                  qkv_bias=qkv_bias, qk_scale=qk_scale,
                                  drop=drop, attn_drop=attn_drop,
@@ -395,12 +395,11 @@ class BasicLayer(nn.Module):
             self.downsample = None
 
     def forward(self, x, x_size):
-        for i, blk in enumerate(self.blocks):
+        for blk in self.blocks:
             if self.use_checkpoint:
                 x = checkpoint.checkpoint(blk, x, x_size)
             else:
                 x = blk(x, x_size)
-                # print(i, x.size(), self.input_resolution)
         if self.downsample is not None:
             x = self.downsample(x)
         return x

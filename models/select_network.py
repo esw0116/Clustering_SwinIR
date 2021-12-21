@@ -202,6 +202,108 @@ def define_G(opt):
                    resi_connection=opt_net['resi_connection'])
 
     # ----------------------------------------
+    # SwinIR -- No shifted window version
+    # ----------------------------------------
+    elif net_type == 'noswinir':
+        from models.network_noswinir import SwinIR as net
+        netG = net(upscale=opt_net['upscale'],
+                   in_chans=opt_net['in_chans'],
+                   img_size=opt_net['img_size'],
+                   window_size=opt_net['window_size'],
+                   img_range=opt_net['img_range'],
+                   depths=opt_net['depths'],
+                   embed_dim=opt_net['embed_dim'],
+                   num_heads=opt_net['num_heads'],
+                   mlp_ratio=opt_net['mlp_ratio'],
+                   upsampler=opt_net['upsampler'],
+                   resi_connection=opt_net['resi_connection'])
+
+    # ----------------------------------------
+    # SwinIR -- blocked window version
+    # ----------------------------------------
+    elif net_type == 'blockswinir':
+        from models.network_blockswinir import SwinIR as net
+        netG = net(upscale=opt_net['upscale'],
+                   in_chans=opt_net['in_chans'],
+                   img_size=opt_net['img_size'],
+                   window_size=opt_net['window_size'],
+                   img_range=opt_net['img_range'],
+                   depths=opt_net['depths'],
+                   embed_dim=opt_net['embed_dim'],
+                   num_heads=opt_net['num_heads'],
+                   mlp_ratio=opt_net['mlp_ratio'],
+                   upsampler=opt_net['upsampler'],
+                   resi_connection=opt_net['resi_connection'])
+
+    # ----------------------------------------
+    # SwinIR -- blocked window version w/o shift
+    # ----------------------------------------
+    elif net_type == 'blocknoswinir':
+        from models.network_blocknoswinir import SwinIR as net
+        netG = net(upscale=opt_net['upscale'],
+                   in_chans=opt_net['in_chans'],
+                   img_size=opt_net['img_size'],
+                   window_size=opt_net['window_size'],
+                   img_range=opt_net['img_range'],
+                   depths=opt_net['depths'],
+                   embed_dim=opt_net['embed_dim'],
+                   num_heads=opt_net['num_heads'],
+                   mlp_ratio=opt_net['mlp_ratio'],
+                   upsampler=opt_net['upsampler'],
+                   resi_connection=opt_net['resi_connection'])
+
+    # ----------------------------------------
+    # SwinIR -- blocked window with channel reduction(half)
+    # ----------------------------------------
+    elif net_type == 'blockcompswinir':
+        from models.network_blockcompswinir import SwinIR as net
+        netG = net(upscale=opt_net['upscale'],
+                   in_chans=opt_net['in_chans'],
+                   img_size=opt_net['img_size'],
+                   window_size=opt_net['window_size'],
+                   img_range=opt_net['img_range'],
+                   depths=opt_net['depths'],
+                   embed_dim=opt_net['embed_dim'],
+                   num_heads=opt_net['num_heads'],
+                   mlp_ratio=opt_net['mlp_ratio'],
+                   upsampler=opt_net['upsampler'],
+                   resi_connection=opt_net['resi_connection'])
+
+    # ----------------------------------------
+    # SwinIR -- without attention
+    # ----------------------------------------
+    elif net_type == 'noattnir':
+        from models.network_noattnir import SwinIR as net
+        netG = net(upscale=opt_net['upscale'],
+                   in_chans=opt_net['in_chans'],
+                   img_size=opt_net['img_size'],
+                   window_size=opt_net['window_size'],
+                   img_range=opt_net['img_range'],
+                   depths=opt_net['depths'],
+                   embed_dim=opt_net['embed_dim'],
+                   num_heads=opt_net['num_heads'],
+                   mlp_ratio=opt_net['mlp_ratio'],
+                   upsampler=opt_net['upsampler'],
+                   resi_connection=opt_net['resi_connection'])
+
+    # ----------------------------------------
+    # SwinIR -- without bias
+    # ----------------------------------------
+    elif net_type == 'onlyattnir':
+        from models.network_onlyattnir import SwinIR as net
+        netG = net(upscale=opt_net['upscale'],
+                   in_chans=opt_net['in_chans'],
+                   img_size=opt_net['img_size'],
+                   window_size=opt_net['window_size'],
+                   img_range=opt_net['img_range'],
+                   depths=opt_net['depths'],
+                   embed_dim=opt_net['embed_dim'],
+                   num_heads=opt_net['num_heads'],
+                   mlp_ratio=opt_net['mlp_ratio'],
+                   upsampler=opt_net['upsampler'],
+                   resi_connection=opt_net['resi_connection'])
+
+    # ----------------------------------------
     # others
     # ----------------------------------------
     # TODO

@@ -310,8 +310,8 @@ class PatchMerging(nn.Module):
         super().__init__()
         self.input_resolution = input_resolution
         self.dim = dim
-        self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
-        self.norm = norm_layer(4 * dim)
+        # self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
+        # self.norm = norm_layer(4 * dim)
 
     def forward(self, x, x_size):
         """
@@ -319,7 +319,7 @@ class PatchMerging(nn.Module):
         """
         H, W = x_size
         B, L, C = x.shape
-        assert L == H * W, "input feature has wrong size"
+        assert L == H * W, "{}, {}, {}: input feature has wrong size".format(L, H, W)
         assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
 
         x = x.view(B, H, W, C)
@@ -331,10 +331,59 @@ class PatchMerging(nn.Module):
         x = torch.cat([x0, x1, x2, x3], -1)  # B H/2 W/2 4*C
         x = x.view(B, -1, 4 * C)  # B H/2*W/2 4*C
 
-        x = self.norm(x)
-        x = self.reduction(x)
+        # x = self.norm(x)
+        # x = self.reduction(x)
 
         return x
+
+    def extra_repr(self) -> str:
+        return f"input_resolution={self.input_resolution}, dim={self.dim}"
+
+    def flops(self):
+        H, W = self.input_resolution
+        flops = H * W * self.dim
+        flops += (H // 2) * (W // 2) * 4 * self.dim * 2 * self.dim
+        return flops
+
+class PatchUnmerging(nn.Module):
+    r""" Patch Merging Layer.
+    Args:
+        input_resolution (tuple[int]): Resolution of input feature.
+        dim (int): Number of input channels.
+        norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
+    """
+
+    def __init__(self, input_resolution, dim, norm_layer=nn.LayerNorm):
+        super().__init__()
+        self.input_resolution = input_resolution
+        self.dim = dim
+        # self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
+        self.norm = norm_layer(dim)
+
+    def forward(self, x, x_size):
+        """
+        x: B, H*W, C
+        """
+        H, W = x_size
+        H = H // 2
+        W = W // 2
+        B, L, C = x.shape
+        assert L == H * W, "input feature has wrong size"
+        assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
+
+        x = x.view(B, H, W, C)
+        c = C // 4
+        X = torch.zeros(B, 2*H, 2*W, c).type_as(x)
+        X[:, 0::2, 0::2, :] = x[..., :c]  # B H/2 W/2 C
+        X[:, 1::2, 0::2, :] = x[..., c:2*c]  # B H/2 W/2 C
+        X[:, 0::2, 1::2, :] = x[..., 2*c:3*c]  # B H/2 W/2 C
+        X[:, 1::2, 1::2, :] = x[..., 3*c:]  # B H/2 W/2 C
+        X = X.view(B, -1, c)  # B H/2*W/2 4*C
+
+        X = self.norm(X)
+        # x = self.reduction(x)
+
+        return X
 
     def extra_repr(self) -> str:
         return f"input_resolution={self.input_resolution}, dim={self.dim}"
@@ -376,8 +425,10 @@ class BasicLayer(nn.Module):
         self.depth = depth
         self.use_checkpoint = use_checkpoint
 
+        depth1 = (self.depth // 3) * 2
+        depth2 = depth - depth1 
         # build blocks
-        self.blocks = nn.ModuleList([
+        self.blocks1 = nn.ModuleList([
             SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
                                  num_heads=num_heads, window_size=window_size,
                                  shift_size=0 if (i % 2 == 0) else window_size // 2,
@@ -386,7 +437,24 @@ class BasicLayer(nn.Module):
                                  drop=drop, attn_drop=attn_drop,
                                  drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
                                  norm_layer=norm_layer)
-            for i in range(depth)])
+            for i in range(depth1)])
+
+        h, w = input_resolution
+        new_input_resolution = (h//2, w//2)
+        self.new_input_resolution = new_input_resolution
+        self.blocks2 = nn.ModuleList([
+            SwinTransformerBlock(dim=4*dim, input_resolution=new_input_resolution,
+                                 num_heads=num_heads, window_size=window_size,
+                                 shift_size=0 if (i % 2 == 0) else window_size // 2,
+                                 mlp_ratio=mlp_ratio,
+                                 qkv_bias=qkv_bias, qk_scale=qk_scale,
+                                 drop=drop, attn_drop=attn_drop,
+                                 drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
+                                 norm_layer=norm_layer)
+            for i in range(depth2)])
+
+        self.pathmerge = PatchMerging(input_resolution, dim, norm_layer)
+        self.pathsplit = PatchUnmerging(new_input_resolution, dim, norm_layer)
 
         # patch merging layer
         if downsample is not None:
@@ -395,12 +463,23 @@ class BasicLayer(nn.Module):
             self.downsample = None
 
     def forward(self, x, x_size):
-        for i, blk in enumerate(self.blocks):
+        # print('Initial', x.size(), x_size)
+        for i, blk in enumerate(self.blocks1):
             if self.use_checkpoint:
                 x = checkpoint.checkpoint(blk, x, x_size)
             else:
                 x = blk(x, x_size)
-                # print(i, x.size(), self.input_resolution)
+        x = self.pathmerge(x, x_size)
+        # print('Merge', x.size())
+        h, w = x_size
+        h, w = h//2, w//2
+        for blk in self.blocks2:
+            if self.use_checkpoint:
+                x = checkpoint.checkpoint(blk, x, (h, w))
+            else:
+                x = blk(x, (h, w))
+        x = self.pathsplit(x, x_size)
+        # print('Unmerge', x.size())
         if self.downsample is not None:
             x = self.downsample(x)
         return x
@@ -720,7 +799,6 @@ class SwinIR(nn.Module):
                          img_size=img_size,
                          patch_size=patch_size,
                          resi_connection=resi_connection
-
                          )
             self.layers.append(layer)
         self.norm = norm_layer(self.num_features)
@@ -783,8 +861,8 @@ class SwinIR(nn.Module):
 
     def check_image_size(self, x):
         _, _, h, w = x.size()
-        mod_pad_h = (self.window_size - h % self.window_size) % self.window_size
-        mod_pad_w = (self.window_size - w % self.window_size) % self.window_size
+        mod_pad_h = (self.window_size*2 - h % (self.window_size*2)) % (self.window_size*2)
+        mod_pad_w = (self.window_size*2 - w % (self.window_size*2)) % (self.window_size*2)
         x = F.pad(x, (0, mod_pad_w, 0, mod_pad_h), 'reflect')
         return x
 

@@ -121,17 +121,20 @@ class WindowAttention(nn.Module):
         qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
 
-        q = q * self.scale
-        attn = (q @ k.transpose(-2, -1))
+        # q = q * self.scale
+        # attn = (q @ k.transpose(-2, -1))
+        # print('A: ', attn.shape)
 
         relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
             self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
         relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
-        attn = attn + relative_position_bias.unsqueeze(0)
+        attn = relative_position_bias.unsqueeze(0).expand(B_, -1, -1, -1)
 
         if mask is not None:
             nW = mask.shape[0]
+            # print('B: ',attn.shape)
             attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
+            # print('C: ',attn.shape)
             attn = attn.view(-1, self.num_heads, N, N)
             attn = self.softmax(attn)
         else:

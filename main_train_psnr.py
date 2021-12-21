@@ -18,6 +18,8 @@ from utils.utils_dist import get_dist_info, init_dist
 from data.select_dataset import define_Dataset
 from models.select_model import define_Model
 
+import nsml
+
 
 '''
 # --------------------------------------------
@@ -156,8 +158,20 @@ def main(json_path='options/train_msrresnet_psnr.json'):
     model.init_train()
     if opt['rank'] == 0:
         logger.info(model.info_network())
-        logger.info(model.info_params())
+        # logger.info(model.info_params())
 
+
+    def nsml_save(filename, **kwargs):
+        save_filename = 'G.pth'
+        filename = os.path.join(filename, save_filename)
+        network = model.get_bare_model(model.netG)
+        state_dict = network.state_dict()
+        for key, param in state_dict.items():
+            state_dict[key] = param.cpu()
+        print(filename)
+        torch.save(state_dict, filename)
+    
+    nsml.bind(save=nsml_save)
     '''
     # ----------------------------------------
     # Step--4 (main training)
@@ -166,8 +180,10 @@ def main(json_path='options/train_msrresnet_psnr.json'):
 
     for epoch in range(1000000):  # keep running
         for i, train_data in enumerate(train_loader):
-
             current_step += 1
+            if current_step > opt['train']['total_iters']:
+                break
+            # print('Current iter: ', current_step)
 
             # -------------------------------
             # 1) update learning rate
@@ -200,6 +216,9 @@ def main(json_path='options/train_msrresnet_psnr.json'):
             if current_step % opt['train']['checkpoint_save'] == 0 and opt['rank'] == 0:
                 logger.info('Saving the model.')
                 model.save(current_step)
+                checkpoint = '{}'.format(current_step)
+                nsml.save(checkpoint=checkpoint)
+
 
             # -------------------------------
             # 6) testing
@@ -207,6 +226,7 @@ def main(json_path='options/train_msrresnet_psnr.json'):
             if current_step % opt['train']['checkpoint_test'] == 0 and opt['rank'] == 0:
 
                 avg_psnr = 0.0
+                avg_time = 0.0
                 idx = 0
 
                 for test_data in test_loader:
@@ -218,17 +238,25 @@ def main(json_path='options/train_msrresnet_psnr.json'):
                     util.mkdir(img_dir)
 
                     model.feed_data(test_data)
+                    
+                    start = torch.cuda.Event(enable_timing=True)
+                    end = torch.cuda.Event(enable_timing=True)
+                    start.record()
                     model.test()
+                    end.record()
+
+                    torch.cuda.synchronize()
 
                     visuals = model.current_visuals()
                     E_img = util.tensor2uint(visuals['E'])
                     H_img = util.tensor2uint(visuals['H'])
+                    # print(E_img.shape, H_img.shape)
 
                     # -----------------------
                     # save estimated image E
                     # -----------------------
-                    save_img_path = os.path.join(img_dir, '{:s}_{:d}.png'.format(img_name, current_step))
-                    util.imsave(E_img, save_img_path)
+                    # save_img_path = os.path.join(img_dir, '{:s}_{:d}.png'.format(img_name, current_step))
+                    # util.imsave(E_img, save_img_path)
 
                     # -----------------------
                     # calculate PSNR
@@ -238,11 +266,19 @@ def main(json_path='options/train_msrresnet_psnr.json'):
                     logger.info('{:->4d}--> {:>10s} | {:<4.2f}dB'.format(idx, image_name_ext, current_psnr))
 
                     avg_psnr += current_psnr
+                    avg_time += start.elapsed_time(end)
 
                 avg_psnr = avg_psnr / idx
+                avg_time = avg_time / idx
 
                 # testing log
-                logger.info('<epoch:{:3d}, iter:{:8,d}, Average PSNR : {:<.2f}dB\n'.format(epoch, current_step, avg_psnr))
+                logger.info('<epoch:{:3d}, iter:{:8,d}, Average PSNR : {:<.2f}dB, Time : {:<.4f}\n'.format(epoch, current_step, avg_psnr, avg_time))
+                nsml.report(step=current_step, psnr=avg_psnr)
+
+        if current_step > opt['train']['total_iters']:
+            print('End training')
+            model.save(current_step)
+            break
 
 if __name__ == '__main__':
     main()

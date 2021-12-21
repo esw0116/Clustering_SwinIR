@@ -116,6 +116,7 @@ class ModelBase():
         msg = '\n'
         msg += 'Networks name: {}'.format(network.__class__.__name__) + '\n'
         msg += 'Params number: {}'.format(sum(map(lambda x: x.numel(), network.parameters()))) + '\n'
+        msg += 'Flops: {}'.format(network.flops()) + '\n'
         msg += 'Net structure:\n{}'.format(str(network)) + '\n'
         return msg
 

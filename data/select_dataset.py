@@ -35,6 +35,9 @@ def define_Dataset(dataset_opt):
     elif dataset_type in ['sr', 'super-resolution']:
         from data.dataset_sr import DatasetSR as D
 
+    elif dataset_type in ['srman', 'super-resolution-manga']:
+        from data.dataset_srman import DatasetSR as D
+
     elif dataset_type in ['vsr', 'video-super-resolution']:
         from data.dataset_vsr import DatasetVSR as D
 
