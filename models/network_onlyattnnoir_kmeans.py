@@ -2,13 +2,15 @@
 # SwinIR: Image Restoration Using Swin Transformer, https://arxiv.org/abs/2108.10257
 # Originally Written by Ze Liu, Modified by Jingyun Liang.
 # -----------------------------------------------------------------------------------
-
+from tqdm import tqdm
 import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
+from torch.nn.parallel import DataParallel, DistributedDataParallel
+
 
 
 class PWD(nn.Module):
@@ -31,7 +33,7 @@ class PWD(nn.Module):
 class Clustering():
     def __init__(
         self, k,
-        n_init=1, max_iter=4500, symmetry='i', cpu=False, n_GPUs=1):
+        n_init=1, max_iter=200, symmetry='i', cpu=False, n_GPUs=4):
         '''
             input arguments
                 n_init:
@@ -58,8 +60,10 @@ class Clustering():
         self.symmetry = symmetry
         self.device = torch.device('cpu' if cpu else 'cuda')
         if not cpu:
-            self.n_GPUs = n_GPUs
-            self.pairwise_dist = nn.DataParallel(PWD(), range(n_GPUs))
+            # self.n_GPUs = n_GPUs
+            self.pairwise_dist = PWD()
+            # self.pairwise_dist = nn.DataParallel(PWD(), range(n_GPUs))
+            # self.pairwise_dist = DistributedDataParallel(PWD(), device_ids=[torch.cuda.current_device()])
         self.tf_dict = {k: v for v, k in enumerate('ihvoIHVO')}
 
     def gen_feat(self, inp):
@@ -72,16 +76,17 @@ class Clustering():
         n, n_feats = points.size()
         #self.make_sampler(n_feats, self.k)
 
-        print('# points: {} / # parameters: {} / # clusters: {}'.format(
-            n, points.nelement(), self.k)
-        )
+        # print('# points: {} / # parameters: {} / # clusters: {}'.format(
+            # n, points.nelement(), self.k)
+        # )
 
-        print('Using {} initial seeds'.format(self.n_init))
-        tqdm.monitor_interval = 0
-        tqdm_init = tqdm(range(self.n_init), ncols=80)
+        # print('Using {} initial seeds'.format(self.n_init))
+        # tqdm.monitor_interval = 0
+        # tqdm_init = tqdm(range(self.n_init), ncols=80)
+        tqdm_init = range(self.n_init)
         best = 1e8
         for i in tqdm_init:
-            tqdm_init.set_description('Best cost: {:.4f}'.format(best))
+            # tqdm_init.set_description('Best cost: {:.4f}'.format(best))
             with torch.no_grad():
                 centroids, labels, cost = self.cluster(points)
             if cost < best or i == 0:
@@ -90,7 +95,7 @@ class Clustering():
                 best = cost
                 best_idx = i
 
-        print('Best round: {}'.format(best_idx))
+        # print('Best round: {}'.format(best_idx))
 
         return self.cluster_centers_.cpu(), self.labels_.cpu()
 
@@ -104,51 +109,53 @@ class Clustering():
 
         pn = points.pow(2).sum(1, keepdim=True)
         centroids = points.index_select(0, init_seeds)
-        tqdm_cl = tqdm(range(self.max_iter), ncols=80)
+        # tqdm_cl = tqdm(range(self.max_iter), ncols=80)
+        tqdm_cl = range(self.max_iter)
 
         # to prevent out of memory...
-        if self.n_GPUs == 1:
-            mem_check = self.k * n * n_feats
-            mem_bound = 3 * 10**8
-            if mem_check > mem_bound:
-                split = round(mem_check / mem_bound)
-            else:
-                split = 1
-        else:
-            split = self.n_GPUs
+        # if self.n_GPUs == 1:
+        #     mem_check = self.k * n * n_feats
+        #     mem_bound = 3 * 10**8
+        #     if mem_check > mem_bound:
+        #         split = round(mem_check / mem_bound)
+        #     else:
+        #         split = 1
+        # else:
+        # split = self.n_GPUs
+        split = 1
 
         for _ in tqdm_cl:
             #centroids_full = self.transform(centroids.repeat(s, 1))
             centroids_full = centroids.repeat(split, 1)
             cn = centroids_full.pow(2).sum(1)
 
-            if self.n_GPUs == 1:
-                min_dists = []
-                min_labels = []
-                for _p, _pn, _c, _cn in zip(
-                    points.chunk(split),
-                    pn.chunk(split),
-                    centroids_full.chunk(split),
-                    cn.chunk(split)):
+            # if self.n_GPUs == 1:
+            #     min_dists = []
+            #     min_labels = []
+            #     for _p, _pn, _c, _cn in zip(
+            #         points.chunk(split),
+            #         pn.chunk(split),
+            #         centroids_full.chunk(split),
+            #         cn.chunk(split)):
 
-                    md, ml = self.pairwise_dist(_p, _pn, _c, _cn)
-                    min_dists.append(md)
-                    min_labels.append(ml)
+            #         md, ml = self.pairwise_dist(_p, _pn, _c, _cn)
+            #         min_dists.append(md)
+            #         min_labels.append(ml)
 
-                min_dists = torch.cat(min_dists)
-                min_labels = torch.cat(min_labels)
-            else:
-                min_dists, min_labels = self.pairwise_dist(
-                    points, pn, centroids_full, cn
-                )
+            #     min_dists = torch.cat(min_dists)
+            #     min_labels = torch.cat(min_labels)
+            # else:
+            min_dists, min_labels = self.pairwise_dist(
+                points, pn, centroids_full, cn
+            )
 
             cost = min_dists.mean().item()
             change = (min_labels != labels).sum().item()
             if change == 0: break
 
-            tqdm_cl.set_description(
-                'C: {:.3e} / Replace {}'.format(cost, change)
-            )
+            # tqdm_cl.set_description(
+            #     'C: {:.3e} / Replace {}'.format(cost, change)
+            # )
 
             centroids_new = points.new_zeros(s * self.k, n_feats)
             centroids_new.index_add_(0, min_labels, points)
@@ -162,7 +169,7 @@ class Clustering():
             centroids.div_(counts.unsqueeze(-1))
             labels.copy_(min_labels)
 
-        return centroids, labels
+        return centroids, labels, cost
 
 
 class Mlp(nn.Module):
@@ -413,14 +420,14 @@ class ClusteredTransformerBlock(nn.Module):
         flops = 0
         H = self.input_resolution
         # norm1
-        flops += self.dim * H * W
+        flops += self.dim * H
         # W-MSA/SW-MSA
-        nW = H * W / self.window_size / self.window_size
-        flops += nW * self.attn.flops(self.window_size * self.window_size)
+        nW = H * self.window_size
+        flops += nW * self.attn.flops(self.window_size)
         # mlp
-        flops += 2 * H * W * self.dim * self.dim * self.mlp_ratio
+        flops += 2 * H * self.dim * self.dim * self.mlp_ratio
         # norm2
-        flops += self.dim * H * W
+        flops += self.dim * H
         return flops
         
 
@@ -638,9 +645,9 @@ class BasicLayer(nn.Module):
         self.input_resolution = input_resolution
         self.depth = depth
         self.use_checkpoint = use_checkpoint
-
+        self.window_size = window_size
         self.n_buckets = 16
-        self.clustering = Clustering(self.n_buckets, n_init=2000, n_GPUs=1)
+        self.clustering = Clustering(self.n_buckets, n_init=1)
 
         # build blocks
         self.blocks = nn.ModuleList([
@@ -672,6 +679,13 @@ class BasicLayer(nn.Module):
             self.downsample = None
 
     def forward(self, x, x_size):
+        start = torch.cuda.Event(enable_timing=True)
+        trans1 = torch.cuda.Event(enable_timing=True)
+        cluster = torch.cuda.Event(enable_timing=True)
+        trans2 = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        start.record()
+
         for i, blk in enumerate(self.blocks):
             if self.use_checkpoint:
                 x = checkpoint.checkpoint(blk, x, x_size)
@@ -679,29 +693,52 @@ class BasicLayer(nn.Module):
                 x = blk(x, x_size)
                 # print(i, x.size(), self.input_resolution)
 
-        L = x.shape[1]
-        x_windows = window_partition1D(x, self.n_buckets)  # nt*B, token_length, C
+        trans1.record()
+        torch.cuda.synchronize()
+
+        H, W = x_size
+        B, L, C = x.shape
+        x = x.reshape(B,H,W,C)
+        x_windows = window_partition(x, self.window_size*2)  # nt*B, token_length, C
+        x_windows = x_windows.flatten(1,2)
         b, l, c = x_windows.shape
+        # print(x_windows.shape)
 
         x_centers = torch.zeros((b, self.n_buckets, c)).type_as(x)
         labels = torch.zeros((b, l)).type_as(x)
         for i in range(b):
-            x_centers[i], labels[i] = self.clustering.fit(x[i])
-        
+            # print('{}/{}'.format(i, b))
+            _, labels[i] = self.clustering.fit(x_windows[i])
+            for j in range(self.n_buckets):
+                x_centers[i,j] = torch.mean(x_windows[i, labels[i]==j], dim=0)
+        labels = labels.long()
+
+        cluster.record()
+        torch.cuda.synchronize()
+
         for i, blk in enumerate(self.post_blocks):
             if self.use_checkpoint:
                 x_centers = checkpoint.checkpoint(blk, x_centers, x_size)
             else:
                 x_centers = blk(x_centers, x_size)
-        
+
+        trans2.record()
+        torch.cuda.synchronize()
+
         x = torch.zeros((b,l,c)).type_as(x_windows)
         for i in range(b):
             for j in range(l):
-                x[i, j] = x_centers[b, labels[i,j]]
-        x = window_reverse1D(x, self.n_buckets, L)
+                x[i, j] = x_centers[i, labels[i,j]]
+        x = window_reverse(x, self.window_size*2, H, W)
+        x = x.reshape(B,L,C)
+
+        end.record()
+        torch.cuda.synchronize()
 
         if self.downsample is not None:
             x = self.downsample(x)
+
+        print(start.elapsed_time(trans1), trans1.elapsed_time(cluster), cluster.elapsed_time(trans2), trans2.elapsed_time(end))
         return x
 
     def extra_repr(self) -> str:
@@ -1082,8 +1119,8 @@ class SwinIR(nn.Module):
 
     def check_image_size(self, x):
         _, _, h, w = x.size()
-        mod_pad_h = (self.window_size - h % self.window_size) % self.window_size
-        mod_pad_w = (self.window_size - w % self.window_size) % self.window_size
+        mod_pad_h = (self.window_size*2 - h % (self.window_size*2)) % (self.window_size*2)
+        mod_pad_w = (self.window_size*2 - w % (self.window_size*2)) % (self.window_size*2)
         x = F.pad(x, (0, mod_pad_w, 0, mod_pad_h), 'reflect')
         return x
 
