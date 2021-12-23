@@ -18,8 +18,6 @@ from utils.utils_dist import get_dist_info, init_dist
 from data.select_dataset import define_Dataset
 from models.select_model import define_Model
 
-import nsml
-
 
 '''
 # --------------------------------------------
@@ -33,7 +31,7 @@ import nsml
 '''
 
 
-def main(json_path='options/train_msrresnet_psnr.json'):
+def main(json_path='options/train_msrresnet_psnr.json', use_nsml=True):
 
     '''
     # ----------------------------------------
@@ -160,18 +158,20 @@ def main(json_path='options/train_msrresnet_psnr.json'):
         logger.info(model.info_network())
         # logger.info(model.info_params())
 
+    if use_nsml:
+        import nsml
 
-    def nsml_save(filename, **kwargs):
-        save_filename = 'G.pth'
-        filename = os.path.join(filename, save_filename)
-        network = model.get_bare_model(model.netG)
-        state_dict = network.state_dict()
-        for key, param in state_dict.items():
-            state_dict[key] = param.cpu()
-        print(filename)
-        torch.save(state_dict, filename)
-    
-    nsml.bind(save=nsml_save)
+        def nsml_save(filename, **kwargs):
+            save_filename = 'G.pth'
+            filename = os.path.join(filename, save_filename)
+            network = model.get_bare_model(model.netG)
+            state_dict = network.state_dict()
+            for key, param in state_dict.items():
+                state_dict[key] = param.cpu()
+            print(filename)
+            torch.save(state_dict, filename)
+        
+        nsml.bind(save=nsml_save)
     '''
     # ----------------------------------------
     # Step--4 (main training)
@@ -217,14 +217,14 @@ def main(json_path='options/train_msrresnet_psnr.json'):
                 logger.info('Saving the model.')
                 model.save(current_step)
                 checkpoint = '{}'.format(current_step)
-                nsml.save(checkpoint=checkpoint)
+                if use_nsml:
+                    nsml.save(checkpoint=checkpoint)
 
 
             # -------------------------------
             # 6) testing
             # -------------------------------
             if current_step % opt['train']['checkpoint_test'] == 0 and opt['rank'] == 0:
-
                 avg_psnr = 0.0
                 avg_time = 0.0
                 idx = 0
@@ -273,7 +273,8 @@ def main(json_path='options/train_msrresnet_psnr.json'):
 
                 # testing log
                 logger.info('<epoch:{:3d}, iter:{:8,d}, Average PSNR : {:<.2f}dB, Time : {:<.4f}\n'.format(epoch, current_step, avg_psnr, avg_time))
-                nsml.report(step=current_step, psnr=avg_psnr)
+                if use_nsml:
+                    nsml.report(step=current_step, psnr=avg_psnr)
 
         if current_step > opt['train']['total_iters']:
             print('End training')
