@@ -679,12 +679,12 @@ class BasicLayer(nn.Module):
             self.downsample = None
 
     def forward(self, x, x_size):
-        start = torch.cuda.Event(enable_timing=True)
-        trans1 = torch.cuda.Event(enable_timing=True)
-        cluster = torch.cuda.Event(enable_timing=True)
-        trans2 = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True)
-        start.record()
+        # start = torch.cuda.Event(enable_timing=True)
+        # trans1 = torch.cuda.Event(enable_timing=True)
+        # cluster = torch.cuda.Event(enable_timing=True)
+        # trans2 = torch.cuda.Event(enable_timing=True)
+        # end = torch.cuda.Event(enable_timing=True)
+        # start.record()
 
         for i, blk in enumerate(self.blocks):
             if self.use_checkpoint:
@@ -693,8 +693,8 @@ class BasicLayer(nn.Module):
                 x = blk(x, x_size)
                 # print(i, x.size(), self.input_resolution)
 
-        trans1.record()
-        torch.cuda.synchronize()
+        # trans1.record()
+        # torch.cuda.synchronize()
 
         H, W = x_size
         B, L, C = x.shape
@@ -706,6 +706,7 @@ class BasicLayer(nn.Module):
 
         x_centers = torch.zeros((b, self.n_buckets, c)).type_as(x)
         labels = torch.zeros((b, l)).type_as(x)
+        ### Kmeans Optimization 1
         for i in range(b):
             # print('{}/{}'.format(i, b))
             _, labels[i] = self.clustering.fit(x_windows[i])
@@ -713,8 +714,8 @@ class BasicLayer(nn.Module):
                 x_centers[i,j] = torch.mean(x_windows[i, labels[i]==j], dim=0)
         labels = labels.long()
 
-        cluster.record()
-        torch.cuda.synchronize()
+        # cluster.record()
+        # torch.cuda.synchronize()
 
         for i, blk in enumerate(self.post_blocks):
             if self.use_checkpoint:
@@ -722,23 +723,28 @@ class BasicLayer(nn.Module):
             else:
                 x_centers = blk(x_centers, x_size)
 
-        trans2.record()
-        torch.cuda.synchronize()
+        # trans2.record()
+        # torch.cuda.synchronize()
 
+
+        x1 = x_centers.gather(dim=1, index=labels)
         x = torch.zeros((b,l,c)).type_as(x_windows)
         for i in range(b):
             for j in range(l):
+                #torch.gather
                 x[i, j] = x_centers[i, labels[i,j]]
+        print((x-x1).pow(2).mean())
+        input()
         x = window_reverse(x, self.window_size*2, H, W)
         x = x.reshape(B,L,C)
 
-        end.record()
-        torch.cuda.synchronize()
+        # end.record()
+        # torch.cuda.synchronize()
 
         if self.downsample is not None:
             x = self.downsample(x)
 
-        print(start.elapsed_time(trans1), trans1.elapsed_time(cluster), cluster.elapsed_time(trans2), trans2.elapsed_time(end))
+        # print(start.elapsed_time(trans1), trans1.elapsed_time(cluster), cluster.elapsed_time(trans2), trans2.elapsed_time(end))
         return x
 
     def extra_repr(self) -> str:
