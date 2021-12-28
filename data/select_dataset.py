@@ -9,7 +9,7 @@
 '''
 
 
-def define_Dataset(dataset_opt):
+def define_Dataset(dataset_opt, **kwargs):
     dataset_type = dataset_opt['dataset_type'].lower()
     if dataset_type in ['l', 'low-quality', 'input-only']:
         from data.dataset_l import DatasetL as D
@@ -71,6 +71,6 @@ def define_Dataset(dataset_opt):
     else:
         raise NotImplementedError('Dataset [{:s}] is not found.'.format(dataset_type))
 
-    dataset = D(dataset_opt)
+    dataset = D(dataset_opt, **kwargs)
     print('Dataset [{:s} - {:s}] is created.'.format(dataset.__class__.__name__, dataset_opt['name']))
     return dataset

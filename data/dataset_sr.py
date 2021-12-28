@@ -4,8 +4,6 @@ import numpy as np
 import torch.utils.data as data
 import utils.utils_image as util
 
-from nsml import DATASET_PATH
-
 
 class DatasetSR(data.Dataset):
     '''
@@ -17,24 +15,33 @@ class DatasetSR(data.Dataset):
     # -----------------------------------------
     '''
 
-    def __init__(self, opt):
+    def __init__(self, opt, **kwargs):
         super(DatasetSR, self).__init__()
         self.opt = opt
         self.n_channels = opt['n_channels'] if opt['n_channels'] else 3
         self.sf = opt['scale'] if opt['scale'] else 4
         self.patch_size = self.opt['H_size'] if self.opt['H_size'] else 96
         self.L_size = self.patch_size // self.sf
-
+        
+        self.use_nsml = kwargs['use_nsml']
         # ------------------------------------
         # get paths of L/H
         # ------------------------------------
-        if self.opt['phase'] == 'train':
-            self.paths_H = util.get_image_paths(os.path.join(DATASET_PATH, 'train/DIV2K/bin/DIV2K_train_HR'))
-            self.paths_L = util.get_image_paths(os.path.join(DATASET_PATH, 'train/DIV2K/bin/DIV2K_train_LR_bicubic', 'X{}'.format(str(opt['scale']))))
+        if self.use_nsml==True:
+            from nsml import DATASET_PATH
+            if self.opt['phase'] == 'train':
+                self.paths_H = util.get_image_paths(os.path.join(DATASET_PATH, 'train/DIV2K/bin/DIV2K_train_HR'))
+                self.paths_L = util.get_image_paths(os.path.join(DATASET_PATH, 'train/DIV2K/bin/DIV2K_train_LR_bicubic', 'X{}'.format(str(opt['scale']))))
+            else:
+                self.paths_H = util.get_image_paths(os.path.join(DATASET_PATH, 'train/benchmark/Set5/HR'))
+                self.paths_L = util.get_image_paths(os.path.join(DATASET_PATH, 'train/benchmark/Set5/LR_bicubic', 'X{}'.format(str(opt['scale']))))
         else:
-            self.paths_H = util.get_image_paths(os.path.join(DATASET_PATH, 'train/benchmark/Set5/HR'))
-            self.paths_L = util.get_image_paths(os.path.join(DATASET_PATH, 'train/benchmark/Set5/LR_bicubic', 'X{}'.format(str(opt['scale']))))
-
+            if self.opt['phase'] == 'train':
+                self.paths_H = util.get_image_paths(os.path.join('dataset/DIV2K/bin/DIV2K_train_HR'))
+                self.paths_L = util.get_image_paths(os.path.join('dataset/DIV2K/bin/DIV2K_train_LR_bicubic', 'X{}'.format(str(opt['scale']))))
+            else:
+                self.paths_H = util.get_image_paths(os.path.join('dataset/benchmark/Set5/HR'))
+                self.paths_L = util.get_image_paths(os.path.join('dataset/benchmark/Set5/LR_bicubic', 'X{}'.format(str(opt['scale']))))
         assert self.paths_H, 'Error: H path is empty.'
         if self.paths_L and self.paths_H:
             assert len(self.paths_L) == len(self.paths_H), 'L/H mismatch - {}, {}.'.format(len(self.paths_L), len(self.paths_H))

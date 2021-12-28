@@ -89,6 +89,10 @@ class Clustering():
             # tqdm_init.set_description('Best cost: {:.4f}'.format(best))
             with torch.no_grad():
                 centroids, labels, cost = self.cluster(points)
+                if labels.unique().numel() == 1 or cost > 1e8: 
+                    # print('!!!!!!!!!!!!!!!!!!!!!!!')
+                    i -= 1
+                    continue
             if cost < best or i == 0:
                 self.cluster_centers_ = centroids.clone()
                 self.labels_ = labels.clone()
@@ -96,7 +100,6 @@ class Clustering():
                 best_idx = i
 
         # print('Best round: {}'.format(best_idx))
-
         return self.cluster_centers_.cpu(), self.labels_.cpu()
 
     def cluster(self, points, log=False):
@@ -679,22 +682,20 @@ class BasicLayer(nn.Module):
             self.downsample = None
 
     def forward(self, x, x_size):
-        start = torch.cuda.Event(enable_timing=True)
-        trans1 = torch.cuda.Event(enable_timing=True)
-        cluster = torch.cuda.Event(enable_timing=True)
-        trans2 = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True)
-        start.record()
+        # start = torch.cuda.Event(enable_timing=True)
+        # trans1 = torch.cuda.Event(enable_timing=True)
+        # cluster = torch.cuda.Event(enable_timing=True)
+        # trans2 = torch.cuda.Event(enable_timing=True)
+        # end = torch.cuda.Event(enable_timing=True)
+        # start.record()
 
         for i, blk in enumerate(self.blocks):
             if self.use_checkpoint:
                 x = checkpoint.checkpoint(blk, x, x_size)
             else:
                 x = blk(x, x_size)
-                # print(i, x.size(), self.input_resolution)
-
-        trans1.record()
-        torch.cuda.synchronize()
+        # trans1.record()
+        # torch.cuda.synchronize()
 
         H, W = x_size
         B, L, C = x.shape
@@ -702,6 +703,7 @@ class BasicLayer(nn.Module):
         x_windows = window_partition(x, self.window_size*2)  # nt*B, token_length, C
         x_windows = x_windows.flatten(1,2)
         b, l, c = x_windows.shape
+        # print('Before clustering', x_windows)
         # print(x_windows.shape)
 
         x_centers = torch.zeros((b, self.n_buckets, c)).type_as(x)
@@ -713,18 +715,20 @@ class BasicLayer(nn.Module):
             for j in range(self.n_buckets):
                 x_centers[i,j] = torch.mean(x_windows[i, labels[i]==j], dim=0)
         labels = labels.long()
+        # print('Clustering', labels, '\n', x_centers, x_centers.shape)
 
-        cluster.record()
-        torch.cuda.synchronize()
+        # cluster.record()
+        # torch.cuda.synchronize()
 
         for i, blk in enumerate(self.post_blocks):
             if self.use_checkpoint:
                 x_centers = checkpoint.checkpoint(blk, x_centers, x_size)
             else:
                 x_centers = blk(x_centers, x_size)
+        # print('After clustering', x_centers)
 
-        trans2.record()
-        torch.cuda.synchronize()
+        # trans2.record()
+        # torch.cuda.synchronize()
 
         x = x_centers.gather(dim=1, index=labels.view(*labels.size(), 1).repeat(1,1,c))
 
@@ -743,18 +747,18 @@ class BasicLayer(nn.Module):
         x = window_reverse(x, self.window_size*2, H, W)
         x = x.reshape(B,L,C)
 
-        end.record()
-        torch.cuda.synchronize()
+        # end.record()
+        # torch.cuda.synchronize()
 
         if self.downsample is not None:
             x = self.downsample(x)
 
-        print(
-            start.elapsed_time(trans1),
-            trans1.elapsed_time(cluster),
-            cluster.elapsed_time(trans2),
-            trans2.elapsed_time(end),
-        )
+        # print(
+        #     start.elapsed_time(trans1),
+        #     trans1.elapsed_time(cluster),
+        #     cluster.elapsed_time(trans2),
+        #     trans2.elapsed_time(end),
+        # )
         return x
 
     def extra_repr(self) -> str:
@@ -832,6 +836,10 @@ class RSTB(nn.Module):
             norm_layer=None)
 
     def forward(self, x, x_size):
+        # y = self.patch_embed(self.conv(self.patch_unembed(self.residual_group(x, x_size), x_size)))
+        # print('transformer', x)
+        # x = x + y
+        # return x
         return self.patch_embed(self.conv(self.patch_unembed(self.residual_group(x, x_size), x_size))) + x
 
     def flops(self):
@@ -1147,8 +1155,9 @@ class SwinIR(nn.Module):
             x = x + self.absolute_pos_embed
         x = self.pos_drop(x)
 
-        for layer in self.layers:
+        for i, layer in enumerate(self.layers):
             x = layer(x, x_size)
+            # print('trans', i, x)
 
         x = self.norm(x)  # B L C
         x = self.patch_unembed(x, x_size)

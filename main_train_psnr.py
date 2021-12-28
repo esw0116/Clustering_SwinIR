@@ -44,7 +44,9 @@ def main(json_path='options/train_msrresnet_psnr.json', use_nsml=True):
     parser.add_argument('--launcher', default='pytorch', help='job launcher')
     parser.add_argument('--local_rank', type=int, default=0)
     parser.add_argument('--dist', default=False)
-
+    parser.add_argument('--use_nsml', default=use_nsml)
+    
+    use_nsml = parser.parse_args().use_nsml
     opt = option.parse(parser.parse_args().opt, is_train=True)
     opt['dist'] = parser.parse_args().dist
 
@@ -117,7 +119,7 @@ def main(json_path='options/train_msrresnet_psnr.json', use_nsml=True):
     # ----------------------------------------
     for phase, dataset_opt in opt['datasets'].items():
         if phase == 'train':
-            train_set = define_Dataset(dataset_opt)
+            train_set = define_Dataset(dataset_opt, use_nsml=use_nsml)
             train_size = int(math.ceil(len(train_set) / dataset_opt['dataloader_batch_size']))
             if opt['rank'] == 0:
                 logger.info('Number of train images: {:,d}, iters: {:,d}'.format(len(train_set), train_size))
@@ -139,7 +141,7 @@ def main(json_path='options/train_msrresnet_psnr.json', use_nsml=True):
                                           pin_memory=True)
 
         elif phase == 'test':
-            test_set = define_Dataset(dataset_opt)
+            test_set = define_Dataset(dataset_opt, use_nsml=use_nsml)
             test_loader = DataLoader(test_set, batch_size=1,
                                      shuffle=False, num_workers=1,
                                      drop_last=False, pin_memory=True)
@@ -158,7 +160,7 @@ def main(json_path='options/train_msrresnet_psnr.json', use_nsml=True):
         logger.info(model.info_network())
         # logger.info(model.info_params())
 
-    if use_nsml:
+    if use_nsml==True:
         import nsml
 
         def nsml_save(filename, **kwargs):
@@ -217,7 +219,7 @@ def main(json_path='options/train_msrresnet_psnr.json', use_nsml=True):
                 logger.info('Saving the model.')
                 model.save(current_step)
                 checkpoint = '{}'.format(current_step)
-                if use_nsml:
+                if use_nsml==True:
                     nsml.save(checkpoint=checkpoint)
 
 
@@ -273,7 +275,7 @@ def main(json_path='options/train_msrresnet_psnr.json', use_nsml=True):
 
                 # testing log
                 logger.info('<epoch:{:3d}, iter:{:8,d}, Average PSNR : {:<.2f}dB, Time : {:<.4f}\n'.format(epoch, current_step, avg_psnr, avg_time))
-                if use_nsml:
+                if use_nsml==True:
                     nsml.report(step=current_step, psnr=avg_psnr)
 
         if current_step > opt['train']['total_iters']:
