@@ -5,7 +5,7 @@ def main():
     net = network_onlyattnnoir_kmeans.SwinIR()
     net.cuda()
     
-    x = torch.randn(4, 3, 96, 96).cuda()
+    x = torch.randn(4, 3, 56, 56).cuda()
     y = net(x)
     isnan = y.isnan()
     print(y)
