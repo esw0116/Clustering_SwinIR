@@ -1,15 +1,14 @@
 import torch
-from models import network_onlyattnnoir_kmeans
+from models import network_onlyattnnoir_kmeans_parallel
 
 def main():
-    net = network_onlyattnnoir_kmeans.SwinIR()
+    net = network_onlyattnnoir_kmeans_parallel.SwinIR()
     net.cuda()
     
-    x = torch.randn(4, 3, 96, 96).cuda()
+    x = torch.randn(8, 3, 96, 96).cuda()
     y = net(x)
-    isnan = y.isnan()
-    print(y)
-    print(isnan.float().sum())
+    #print(y)
+    #print(isnan.float().sum())
     return
 
 if __name__ == '__main__':

@@ -2,6 +2,7 @@
 # SwinIR: Image Restoration Using Swin Transformer, https://arxiv.org/abs/2108.10257
 # Originally Written by Ze Liu, Modified by Jingyun Liang.
 # -----------------------------------------------------------------------------------
+import typing
 from tqdm import tqdm
 import math
 import torch
@@ -31,9 +32,12 @@ class PWD(nn.Module):
         return min_dists, min_labels
 
 class Clustering():
+
     def __init__(
-        self, k,
-        n_init=1, max_iter=200, symmetry='i', cpu=False, n_GPUs=4):
+            self,
+            k: int,
+            n_init: int=1,
+            max_iter: int=200) -> None:
         '''
             input arguments
                 n_init:
@@ -57,42 +61,27 @@ class Clustering():
         self.k = k
         self.n_init = n_init
         self.max_iter = max_iter
-        self.symmetry = symmetry
-        self.device = torch.device('cpu' if cpu else 'cuda')
-        if not cpu:
-            # self.n_GPUs = n_GPUs
-            self.pairwise_dist = PWD()
-            # self.pairwise_dist = nn.DataParallel(PWD(), range(n_GPUs))
-            # self.pairwise_dist = DistributedDataParallel(PWD(), device_ids=[torch.cuda.current_device()])
-        self.tf_dict = {k: v for v, k in enumerate('ihvoIHVO')}
+        return
 
-    def gen_feat(self, inp):
-        with torch.no_grad():
-            self.feat = self.encoder(inp)
-        return self.feat
+    def fit(
+            self,
+            points: torch.Tensor) -> typing.Tuple[torch.Tensor, torch.Tensor]:
 
-    def fit(self, points):
-        points = points.to(self.device)
-        n, n_feats = points.size()
-        #self.make_sampler(n_feats, self.k)
+        '''
+        We assume that the input points are batched, e.g., (B, N, C)
+        
+        '''
 
-        # print('# points: {} / # parameters: {} / # clusters: {}'.format(
-            # n, points.nelement(), self.k)
-        # )
-
-        # print('Using {} initial seeds'.format(self.n_init))
-        # tqdm.monitor_interval = 0
-        # tqdm_init = tqdm(range(self.n_init), ncols=80)
         tqdm_init = range(self.n_init)
         best = 1e8
         for i in tqdm_init:
-            # tqdm_init.set_description('Best cost: {:.4f}'.format(best))
             with torch.no_grad():
                 centroids, labels, cost = self.cluster(points)
                 if labels.unique().numel() == 1 or cost > 1e8: 
                     # print('!!!!!!!!!!!!!!!!!!!!!!!')
                     i -= 1
                     continue
+
             if cost < best or i == 0:
                 self.cluster_centers_ = centroids.clone()
                 self.labels_ = labels.clone()
@@ -100,77 +89,80 @@ class Clustering():
                 best_idx = i
 
         # print('Best round: {}'.format(best_idx))
-        return self.cluster_centers_.cpu(), self.labels_.cpu()
+        return self.cluster_centers_, self.labels_
 
-    def cluster(self, points, log=False):
-        n, n_feats = points.size()
-        s = len(self.symmetry)
+    @torch.no_grad()
+    def cluster(self, points: torch.Tensor, log=False):
+        '''
+        We assume that the input points are batched, e.g., (B, N, C)
+        
+        '''
+        # (B, N, C)
+        b, n, n_feats = points.size()
 
-        labels = torch.LongTensor(n).to(self.device)
-        ones = points.new_ones(n)
+        # (B x N, C)
+        points_flat = points.view(b * n, n_feats)
+
+        # (B, N)
+        #labels = torch.LongTensor(b, n, device=points.device)
+        labels = torch.full((b, n), -1, dtype=torch.long, device=points.device)
+
+        ones = points.new_ones(b, n)
+        ones_flat = points.new_ones(b * n).long()
+
+        # (B, k)
         init_seeds = ones.multinomial(self.k, replacement=False)
+        init_seeds_adder = n * torch.arange(
+            b,
+            dtype=torch.long,
+            device=init_seeds.device,
+        )
+        init_seeds_adder = init_seeds_adder.view(-1, 1)
+        init_seeds_flat = (init_seeds + init_seeds_adder).view(-1)
+        centroids_flat = points_flat[init_seeds_flat]
 
-        pn = points.pow(2).sum(1, keepdim=True)
-        centroids = points.index_select(0, init_seeds)
-        # tqdm_cl = tqdm(range(self.max_iter), ncols=80)
-        tqdm_cl = range(self.max_iter)
+        # (B, k, C)
+        centroids = centroids_flat.view(b, self.k, n_feats)
 
-        # to prevent out of memory...
-        # if self.n_GPUs == 1:
-        #     mem_check = self.k * n * n_feats
-        #     mem_bound = 3 * 10**8
-        #     if mem_check > mem_bound:
-        #         split = round(mem_check / mem_bound)
-        #     else:
-        #         split = 1
-        # else:
-        # split = self.n_GPUs
-        split = 1
+        #centroids = points[init_seeds]
+        #print('centroids', centroids.size())
+        #print('points:', points.size())
+        #print('init_seeds:', init_seeds.size())
 
-        for _ in tqdm_cl:
-            #centroids_full = self.transform(centroids.repeat(s, 1))
-            centroids_full = centroids.repeat(split, 1)
-            cn = centroids_full.pow(2).sum(1)
+        for _ in range(self.max_iter):
+            # (B, N, k)
+            pwd = torch.cdist(points, centroids)
 
-            # if self.n_GPUs == 1:
-            #     min_dists = []
-            #     min_labels = []
-            #     for _p, _pn, _c, _cn in zip(
-            #         points.chunk(split),
-            #         pn.chunk(split),
-            #         centroids_full.chunk(split),
-            #         cn.chunk(split)):
-
-            #         md, ml = self.pairwise_dist(_p, _pn, _c, _cn)
-            #         min_dists.append(md)
-            #         min_labels.append(ml)
-
-            #     min_dists = torch.cat(min_dists)
-            #     min_labels = torch.cat(min_labels)
-            # else:
-            min_dists, min_labels = self.pairwise_dist(
-                points, pn, centroids_full, cn
-            )
-
+            # (B, N) respectively
+            min_dists, min_labels = pwd.min(-1)
             cost = min_dists.mean().item()
             change = (min_labels != labels).sum().item()
-            if change == 0: break
+            if change == 0:
+                break
 
-            # tqdm_cl.set_description(
-            #     'C: {:.3e} / Replace {}'.format(cost, change)
-            # )
+            # (B x k, C)
+            centroids_flat = centroids.view(b * self.k, -1)
+            centroids_flat_new = torch.zeros_like(centroids_flat)
+            
+            label_adder = self.k * torch.arange(
+                b,
+                dtype=torch.long,
+                device=min_labels.device,
+            )
+            label_adder = label_adder.view(-1, 1)
+            # (B x N)
+            min_labels_flat = (min_labels + label_adder).view(-1)
 
-            centroids_new = points.new_zeros(s * self.k, n_feats)
-            centroids_new.index_add_(0, min_labels, points)
-            #centroids_new = self.transform(centroids_new, inverse=True)
-            centroids = sum(centroids_new.chunk(s))
+            centroids_flat_new.index_add_(0, min_labels_flat, points_flat)
 
-            counts_new = points.new_zeros(s * self.k)
-            counts_new.index_add_(0, min_labels, ones)
-            counts = sum(counts_new.chunk(s))
+            counts_flat = min_labels_flat.new_zeros(b * self.k)
+            counts_flat = counts_flat.index_add_(0, min_labels_flat, ones_flat)
 
-            centroids.div_(counts.unsqueeze(-1))
-            labels.copy_(min_labels)
+            centroids_flat_new.div_(counts_flat.unsqueeze(-1) + 1e-8)
+
+            # Update centroids and labels
+            centroids = centroids_flat_new.view(b, self.k, n_feats)
+            labels = min_labels
 
         return centroids, labels, cost
 
@@ -710,10 +702,13 @@ class BasicLayer(nn.Module):
         H, W = x_size
         B, L, C = x.shape
         x = x.reshape(B,H,W,C)
+        #print('x:', x.size())
+        #print('window_size:', self.window_size)
         x_windows = window_partition(x, self.window_size*2)  # nt*B, token_length, C
         x_windows = x_windows.flatten(1,2)
         b, l, c = x_windows.shape
 
+        '''
         x_centers = torch.zeros((b, self.n_buckets, c)).type_as(x)
         labels = torch.zeros((b, l)).type_as(x)
         ### Kmeans Optimization 1
@@ -723,6 +718,11 @@ class BasicLayer(nn.Module):
             for j in range(self.n_buckets):
                 x_centers[i,j] = torch.mean(x_windows[i, labels[i]==j], dim=0)
         labels = labels.long()
+        '''
+        #print('x_window:', x_windows.size())
+        x_centers, labels = self.clustering.fit(x_windows)
+        #print('x_centers:', x_centers.size())
+        #print('labels:', labels.size())
 
         if print_time:
             cluster.record()
