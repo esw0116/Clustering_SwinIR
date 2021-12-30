@@ -88,11 +88,13 @@ class Clustering():
         for i in tqdm_init:
             # tqdm_init.set_description('Best cost: {:.4f}'.format(best))
             with torch.no_grad():
+                # while(1):
+                #     centroids, labels, cost = self.cluster(points)
+                #     print('!', labels.unique().numel())
+                #     if labels.unique().numel() == self.k and cost < 1e8:
+                #         print('End')
+                #         break
                 centroids, labels, cost = self.cluster(points)
-                if labels.unique().numel() == 1 or cost > 1e8: 
-                    # print('!!!!!!!!!!!!!!!!!!!!!!!')
-                    i -= 1
-                    continue
             if cost < best or i == 0:
                 self.cluster_centers_ = centroids.clone()
                 self.labels_ = labels.clone()
@@ -304,7 +306,7 @@ class WindowAttention(nn.Module):
         # trunc_normal_(self.relative_position_bias_table, std=.02)
         self.softmax = nn.Softmax(dim=-1)
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mask=None, valid_mask=None):
         """
         Args:
             x: input features with shape of (num_windows*B, N, C)
@@ -328,6 +330,11 @@ class WindowAttention(nn.Module):
             attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
             # print('C: ',attn.shape)
             attn = attn.view(-1, self.num_heads, N, N)
+            attn = self.softmax(attn)
+        elif valid_mask is not None:
+            # Here, we treat mask as valid indices
+            valid_mask = valid_mask.unsqueeze(1).expand(-1, self.num_heads, N, N)
+            attn = valid_mask * attn + (1-valid_mask) * (-1e5)
             attn = self.softmax(attn)
         else:
             attn = self.softmax(attn)
@@ -401,13 +408,13 @@ class ClusteredTransformerBlock(nn.Module):
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
-    def forward(self, x, x_size):
+    def forward(self, x, x_size, mask=None):
         H, W = x_size
         B, L, C = x.shape
         shortcut = x
 
         # W-MSA/SW-MSA (to be compatible for testing on images whose shapes are the multiple of window size
-        x = self.attn(x, mask=None)  # nW*B, L, C
+        x = self.attn(x, valid_mask=mask)  # nW*B, L, C
 
         # FFN
         x = shortcut + self.drop_path(x)
@@ -688,7 +695,7 @@ class BasicLayer(nn.Module):
         else:
             self.downsample = None
 
-    def forward(self, x, x_size, print_time=True):
+    def forward(self, x, x_size, print_time=False):
         if print_time:
             start = torch.cuda.Event(enable_timing=True)
             trans1 = torch.cuda.Event(enable_timing=True)
@@ -716,12 +723,21 @@ class BasicLayer(nn.Module):
 
         x_centers = torch.zeros((b, self.n_buckets, c)).type_as(x)
         labels = torch.zeros((b, l)).type_as(x)
-        ### Kmeans Optimization 1
+        valid_labels =torch.zeros((b, self.n_buckets, self.n_buckets)).type_as(x)
         for i in range(b):
-            # print('{}/{}'.format(i, b))
             _, labels[i] = self.clustering.fit(x_windows[i])
+            ## In the case of incomplete grouping
+            valid_labels[i, :, labels[i].unique().long()] = 1
+            # print(labels[i])
+            # print(valid_labels[i])
             for j in range(self.n_buckets):
-                x_centers[i,j] = torch.mean(x_windows[i, labels[i]==j], dim=0)
+                if j in labels[i].unique():
+                    x_centers[i,j] = torch.mean(x_windows[i, labels[i]==j], dim=0)
+                else:
+                    x_centers[i,j] = torch.zeros(c).type_as(x)
+            #     print(i, j)
+            #     print(x_centers[i,j])
+            # input()
         labels = labels.long()
 
         if print_time:
@@ -730,7 +746,7 @@ class BasicLayer(nn.Module):
 
         for i, blk in enumerate(self.post_blocks):
             if self.use_checkpoint:
-                x_centers = checkpoint.checkpoint(blk, x_centers, x_size)
+                x_centers = checkpoint.checkpoint(blk, x_centers, x_size, mask=valid_labels)
             else:
                 x_centers = blk(x_centers, x_size)
 
@@ -1184,7 +1200,7 @@ class SwinIR(nn.Module):
 
         self.mean = self.mean.type_as(x)
         x = (x - self.mean) * self.img_range
-
+        
         if self.upsampler == 'pixelshuffle':
             # for classical SR
             x = self.conv_first(x)
