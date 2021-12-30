@@ -140,7 +140,6 @@ class ModelPlain(ModelBase):
     # feed L to netG
     # ----------------------------------------
     def netG_forward(self):
-        # print('input size', self.L.size())
         self.E = self.netG(self.L)
 
     # ----------------------------------------
