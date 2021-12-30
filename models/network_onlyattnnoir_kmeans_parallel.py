@@ -3,6 +3,7 @@
 # Originally Written by Ze Liu, Modified by Jingyun Liang.
 # -----------------------------------------------------------------------------------
 import typing
+from matplotlib.pyplot import new_figure_manager
 from tqdm import tqdm
 import math
 import torch
@@ -65,31 +66,64 @@ class Clustering():
 
     def fit(
             self,
-            points: torch.Tensor) -> typing.Tuple[torch.Tensor, torch.Tensor]:
+            points: torch.Tensor,
+            init_type: str='random',
+            enable_gradient: bool=False) -> typing.Tuple[torch.Tensor, torch.Tensor]:
 
         '''
         We assume that the input points are batched, e.g., (B, N, C)
         
         '''
 
-        tqdm_init = range(self.n_init)
         best = 1e8
-        for i in tqdm_init:
-            with torch.no_grad():
-                centroids, labels, cost = self.cluster(points)
-                if labels.unique().numel() == 1 or cost > 1e8: 
-                    # print('!!!!!!!!!!!!!!!!!!!!!!!')
-                    i -= 1
-                    continue
+        for _ in range(self.n_init):
+            centroids, labels, cost = self.cluster(points)
 
-            if cost < best or i == 0:
+            if cost < best:
                 self.cluster_centers_ = centroids.clone()
                 self.labels_ = labels.clone()
                 best = cost
-                best_idx = i
 
         # print('Best round: {}'.format(best_idx))
+        if enable_gradient:
+            points_flat = points.view(points.size(0) * points.size(1), -1)
+            self.cluster_centers_ = self.construct_centroid(
+                points_flat, self.labels_,
+            )
+
         return self.cluster_centers_, self.labels_
+
+    def construct_centroid(
+            self,
+            points_flat: torch.Tensor,
+            labels: torch.Tensor) -> torch.Tensor:
+
+        # batch size
+        bn, n_feats = points_flat.size()
+        b = labels.size(0)
+
+        # (B x k, C)
+        centroids_flat = points_flat.new_zeros(b * self.k, n_feats)
+        ones_flat = points_flat.new_ones(bn).long()
+
+        label_adder = self.k * torch.arange(
+            b,
+            dtype=torch.long,
+            device=labels.device,
+        )
+        label_adder = label_adder.view(-1, 1)
+
+        # (B x N)
+        labels_flat = (labels + label_adder).view(-1)
+
+        centroids_flat.index_add_(0, labels_flat, points_flat)
+
+        counts_flat = labels_flat.new_zeros(b * self.k)
+        counts_flat = counts_flat.index_add_(0, labels_flat, ones_flat)
+
+        centroids_flat.div_(counts_flat.unsqueeze(-1) + 1e-8)
+        centroids = centroids_flat.view(b, self.k, n_feats)
+        return centroids
 
     @torch.no_grad()
     def cluster(self, points: torch.Tensor, log=False):
@@ -108,7 +142,6 @@ class Clustering():
         labels = torch.full((b, n), -1, dtype=torch.long, device=points.device)
 
         ones = points.new_ones(b, n)
-        ones_flat = points.new_ones(b * n).long()
 
         # (B, k)
         init_seeds = ones.multinomial(self.k, replacement=False)
@@ -129,7 +162,7 @@ class Clustering():
         #print('points:', points.size())
         #print('init_seeds:', init_seeds.size())
 
-        for _ in range(self.max_iter):
+        for i in range(self.max_iter):
             # (B, N, k)
             pwd = torch.cdist(points, centroids)
 
@@ -137,31 +170,10 @@ class Clustering():
             min_dists, min_labels = pwd.min(-1)
             cost = min_dists.mean().item()
             change = (min_labels != labels).sum().item()
-            if change == 0:
+            if change == 0 and i > 0:
                 break
 
-            # (B x k, C)
-            centroids_flat = centroids.view(b * self.k, -1)
-            centroids_flat_new = torch.zeros_like(centroids_flat)
-            
-            label_adder = self.k * torch.arange(
-                b,
-                dtype=torch.long,
-                device=min_labels.device,
-            )
-            label_adder = label_adder.view(-1, 1)
-            # (B x N)
-            min_labels_flat = (min_labels + label_adder).view(-1)
-
-            centroids_flat_new.index_add_(0, min_labels_flat, points_flat)
-
-            counts_flat = min_labels_flat.new_zeros(b * self.k)
-            counts_flat = counts_flat.index_add_(0, min_labels_flat, ones_flat)
-
-            centroids_flat_new.div_(counts_flat.unsqueeze(-1) + 1e-8)
-
-            # Update centroids and labels
-            centroids = centroids_flat_new.view(b, self.k, n_feats)
+            centroids = self.construct_centroid(points_flat, min_labels)
             labels = min_labels
 
         return centroids, labels, cost
@@ -720,7 +732,7 @@ class BasicLayer(nn.Module):
         labels = labels.long()
         '''
         #print('x_window:', x_windows.size())
-        x_centers, labels = self.clustering.fit(x_windows)
+        x_centers, labels = self.clustering.fit(x_windows, enable_gradient=True)
         #print('x_centers:', x_centers.size())
         #print('labels:', labels.size())
 
