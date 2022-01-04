@@ -17,7 +17,7 @@ class DatasetSR(data.Dataset):
     # -----------------------------------------
     '''
 
-    def __init__(self, opt):
+    def __init__(self, opt, **kwargs):
         super(DatasetSR, self).__init__()
         self.opt = opt
         self.n_channels = opt['n_channels'] if opt['n_channels'] else 3

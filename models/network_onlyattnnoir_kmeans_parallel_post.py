@@ -675,7 +675,7 @@ class BasicLayer(nn.Module):
                                 norm_layer=norm_layer)
             for i in range(depth//2)])
         
-        self.post_blocks = nn.ModuleList([
+        self.pre_blocks = nn.ModuleList([
             ClusteredTransformerBlock(dim=dim, input_resolution=input_resolution,
                                 num_heads=num_heads, window_size=self.n_buckets,
                                 shift_size=0,
@@ -698,18 +698,7 @@ class BasicLayer(nn.Module):
             trans1 = torch.cuda.Event(enable_timing=True)
             cluster = torch.cuda.Event(enable_timing=True)
             trans2 = torch.cuda.Event(enable_timing=True)
-            end = torch.cuda.Event(enable_timing=True)
             start.record()
-
-        for i, blk in enumerate(self.blocks):
-            if self.use_checkpoint:
-                x = checkpoint.checkpoint(blk, x, x_size)
-            else:
-                x = blk(x, x_size)
-
-        if print_time:
-            trans1.record()
-            torch.cuda.synchronize()
 
         H, W = x_size
         B, L, C = x.shape
@@ -720,34 +709,20 @@ class BasicLayer(nn.Module):
         x_windows = x_windows.flatten(1,2)
         b, l, c = x_windows.shape
 
-        '''
-        x_centers = torch.zeros((b, self.n_buckets, c)).type_as(x)
-        labels = torch.zeros((b, l)).type_as(x)
-        ### Kmeans Optimization 1
-        for i in range(b):
-            # print('{}/{}'.format(i, b))
-            _, labels[i] = self.clustering.fit(x_windows[i])
-            for j in range(self.n_buckets):
-                x_centers[i,j] = torch.mean(x_windows[i, labels[i]==j], dim=0)
-        labels = labels.long()
-        '''
-        #print('x_window:', x_windows.size())
         x_centers, labels = self.clustering.fit(x_windows, enable_gradient=True)
-        #print('x_centers:', x_centers.size())
-        #print('labels:', labels.size())
 
         if print_time:
             cluster.record()
             torch.cuda.synchronize()
 
-        for i, blk in enumerate(self.post_blocks):
+        for i, blk in enumerate(self.pre_blocks):
             if self.use_checkpoint:
                 x_centers = checkpoint.checkpoint(blk, x_centers, x_size)
             else:
                 x_centers = blk(x_centers, x_size)
 
         if print_time:
-            trans2.record()
+            trans1.record()
             torch.cuda.synchronize()
 
         x = x_centers.gather(
@@ -755,23 +730,17 @@ class BasicLayer(nn.Module):
             index=labels.view(*labels.size(), 1).repeat(1, 1, c),
         )
 
-        '''
-        abcd.record()
-        torch.cuda.synchronize()
-
-        x = torch.zeros((b,l,c)).type_as(x_windows)
-        for i in range(b):
-            for j in range(l):
-                #torch.gather
-                x[i, j] = x_centers[i, labels[i,j]]
-
-        print((x-x1).pow(2).mean())
-        '''
         x = window_reverse(x, self.window_size*2, H, W)
         x = x.reshape(B,L,C)
 
+        for i, blk in enumerate(self.blocks):
+            if self.use_checkpoint:
+                x = checkpoint.checkpoint(blk, x, x_size)
+            else:
+                x = blk(x, x_size)
+
         if print_time:
-            end.record()
+            trans2.record()
             torch.cuda.synchronize()
 
         if self.downsample is not None:
@@ -779,10 +748,9 @@ class BasicLayer(nn.Module):
 
         if print_time:
             print(
-                start.elapsed_time(trans1),
-                trans1.elapsed_time(cluster),
-                cluster.elapsed_time(trans2),
-                trans2.elapsed_time(end),
+                start.elapsed_time(cluster),
+                cluster.elapsed_time(trans1),
+                trans1.elapsed_time(trans2),
             )
 
         return x

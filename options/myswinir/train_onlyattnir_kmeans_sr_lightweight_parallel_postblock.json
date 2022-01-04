@@ -22,17 +22,17 @@
 
       , "dataloader_shuffle": true
       , "dataloader_num_workers": 16
-      , "dataloader_batch_size": 32      // Total batch size =8x8=64 in SwinIR
+      , "dataloader_batch_size": 64      // Total batch size =8x8=64 in SwinIR
     }
     , "test": {
       "name": "test_dataset"            // just name
-      , "dataset_type": "srman"         // "dncnn" | "dnpatch" | "fdncnn" | "ffdnet" | "sr" | "srmd" | "dpsr" | "plain" | "plainpatch" | "jpeg"
+      , "dataset_type": "sr"         // "dncnn" | "dnpatch" | "fdncnn" | "ffdnet" | "sr" | "srmd" | "dpsr" | "plain" | "plainpatch" | "jpeg"
 
     }
   }
 
   , "netG": {
-    "net_type": "parallelkmeans" 
+    "net_type": "parallelkmeanspostblock" 
     , "upscale": 2                      // 2 | 3  | 4
     , "in_chans": 3 
     , "img_size": 64
@@ -70,9 +70,9 @@
     , "G_param_strict": true
     , "E_param_strict": true
 
-    , "checkpoint_test": 1           // for testing
+    , "checkpoint_test": 2500           // for testing
     , "checkpoint_save": 2500           // for saving model
-    , "checkpoint_print": 25           // for print
-    , "total_iters": 2            // total iterations for training
+    , "checkpoint_print": 250           // for print
+    , "total_iters": 250000             // total iterations for training
   }
 }
