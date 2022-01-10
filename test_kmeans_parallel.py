@@ -3,7 +3,7 @@ from os import path
 from matplotlib import pyplot as plt
 import torch
 import random
-from models import network_onlyattnnoir_kmeans_parallel
+from code.Clustering_SwinIR.models import network_onlyattnnoir_kmeans
 
 def make_gaussian_group(x, y, sigma=0.3):
     px = x + sigma * torch.randn(100)
@@ -14,7 +14,7 @@ def make_gaussian_group(x, y, sigma=0.3):
 def main():
     save_dir = 'debug'
     os.makedirs(save_dir, exist_ok=True)
-    net = network_onlyattnnoir_kmeans_parallel.SwinIR()
+    net = network_onlyattnnoir_kmeans.SwinIR()
     net.cuda()
 
     batches = []    
@@ -35,7 +35,7 @@ def main():
     batches = torch.stack(batches, dim=0)
     batches = batches.cuda()
 
-    c = network_onlyattnnoir_kmeans_parallel.Clustering(k=4)
+    c = network_onlyattnnoir_kmeans.Clustering(k=4)
     centers, labels = c.fit(batches)
 
     print(centers.size(), labels.size())

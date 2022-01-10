@@ -379,14 +379,15 @@ class ClusteredTransformerBlock(nn.Module):
         norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
     """
 
-    def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0,
+    def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0, num_groups=16,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0., drop_path=0.,
                  act_layer=nn.GELU, norm_layer=nn.LayerNorm):
         super().__init__()
         self.dim = dim
         self.input_resolution = input_resolution
         self.num_heads = num_heads
-        self.window_size = 4 ## sqrt(16)
+        self.num_groups = num_groups
+        self.window_size = window_size
         self.shift_size = shift_size
         self.mlp_ratio = mlp_ratio
         # if min(self.input_resolution) <= self.window_size:
@@ -397,7 +398,7 @@ class ClusteredTransformerBlock(nn.Module):
 
         self.norm1 = norm_layer(dim)
         self.attn = WindowAttention(
-            dim, window_size=(self.window_size, 1), num_heads=num_heads,
+            dim, window_size=(num_groups, 1), num_heads=num_heads,
             qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
 
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
@@ -406,10 +407,7 @@ class ClusteredTransformerBlock(nn.Module):
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
     def forward(self, x, x_size):
-        H, W = x_size
-        B, L, C = x.shape
         shortcut = x
-
         # W-MSA/SW-MSA (to be compatible for testing on images whose shapes are the multiple of window size
         x = self.attn(x, mask=None)  # nW*B, L, C
 
@@ -421,7 +419,7 @@ class ClusteredTransformerBlock(nn.Module):
 
     def extra_repr(self) -> str:
         return f"dim={self.dim}, input_resolution={self.input_resolution}, num_heads={self.num_heads}, " \
-                f"window_size={self.window_size}, shift_size={self.shift_size}, mlp_ratio={self.mlp_ratio}"
+                f"window_size={self.window_size}, num_groups={self.num_groups}, shift_size={self.shift_size}, mlp_ratio={self.mlp_ratio}"
 
     def flops(self):
         flops = 0
@@ -430,11 +428,11 @@ class ClusteredTransformerBlock(nn.Module):
         flops += self.dim * H * W
         # W-MSA/SW-MSA
         nW = H * W / self.window_size / self.window_size
-        flops += nW * self.attn.flops(self.window_size * self.window_size)
+        flops += nW * self.attn.flops(self.num_groups)
         # mlp
-        flops += 2 * H * W * self.dim * self.dim * self.mlp_ratio
+        flops += 2 * H * self.dim * self.dim * self.mlp_ratio
         # norm2
-        flops += self.dim * H * W
+        flops += self.dim * H
         return flops
         
 
@@ -619,13 +617,6 @@ class PatchMerging(nn.Module):
     def flops(self):
         H, W = self.input_resolution
         flops = H * W * self.dim
-        print(
-            start.elapsed_time(trans1),
-            trans1.elapsed_time(cluster),
-            cluster.elapsed_time(trans2),
-            trans2.elapsed_time(end),
-        )
-
         flops += (H // 2) * (W // 2) * 4 * self.dim * 2 * self.dim
         return flops
 
@@ -721,7 +712,7 @@ class BasicClusterLayer(nn.Module):
         use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False.
     """
 
-    def __init__(self, dim, input_resolution, depth, num_heads, window_size,
+    def __init__(self, dim, input_resolution, depth, num_heads, window_size, num_groups=16,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False):
 
@@ -730,14 +721,13 @@ class BasicClusterLayer(nn.Module):
         self.input_resolution = input_resolution
         self.depth = depth
         self.use_checkpoint = use_checkpoint
-        self.window_size = window_size
-        self.n_buckets = 16
-        self.clustering = Clustering(self.n_buckets, n_init=1)
+        self.num_groups = num_groups
+        self.clustering = Clustering(self.num_groups, n_init=1)
 
         # build blocks
         self.blocks = nn.ModuleList([
             ClusteredTransformerBlock(dim=dim, input_resolution=input_resolution,
-                                num_heads=num_heads, window_size=self.n_buckets,
+                                num_heads=num_heads, window_size=window_size, num_groups=self.num_groups,
                                 shift_size=0,
                                 mlp_ratio=mlp_ratio,
                                 qkv_bias=qkv_bias, qk_scale=qk_scale,
@@ -917,7 +907,7 @@ class RPCTB(nn.Module):
         resi_connection: The convolutional block before residual connection.
     """
 
-    def __init__(self, dim, input_resolution, depth, num_heads, window_size,
+    def __init__(self, dim, input_resolution, depth, num_heads, window_size, num_groups=16,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False,
                  img_size=224, patch_size=4, resi_connection='1conv'):
@@ -931,6 +921,7 @@ class RPCTB(nn.Module):
                                          depth=depth,
                                          num_heads=num_heads,
                                          window_size=window_size,
+                                         num_groups=num_groups,
                                          mlp_ratio=mlp_ratio,
                                          qkv_bias=qkv_bias, qk_scale=qk_scale,
                                          drop=drop, attn_drop=attn_drop,
@@ -1125,7 +1116,7 @@ class SwinIR(nn.Module):
     """
 
     def __init__(self, img_size=64, patch_size=1, in_chans=3,
-                 embed_dim=96, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6],
+                 embed_dim=96, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6], num_groups=16,
                  window_size=7, mlp_ratio=4., qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
@@ -1183,13 +1174,14 @@ class SwinIR(nn.Module):
 
         # build Residual Swin Transformer blocks (RSTB)
         self.layers = nn.ModuleList()
-        for i_layer in range(self.num_layers//2):
+        for i_layer in range(self.num_layers-1):
             layer = RPCTB(dim=embed_dim,
                          input_resolution=(patches_resolution[0],
                                            patches_resolution[1]),
                          depth=depths[i_layer],
                          num_heads=num_heads[i_layer],
                          window_size=window_size,
+                         num_groups=num_groups,
                          mlp_ratio=self.mlp_ratio,
                          qkv_bias=qkv_bias, qk_scale=qk_scale,
                          drop=drop_rate, attn_drop=attn_drop_rate,
@@ -1202,24 +1194,25 @@ class SwinIR(nn.Module):
                          resi_connection=resi_connection
                          )
             self.layers.append(layer)
-            layer = RSTB(dim=embed_dim,
-                         input_resolution=(patches_resolution[0],
-                                           patches_resolution[1]),
-                         depth=depths[i_layer],
-                         num_heads=num_heads[i_layer],
-                         window_size=window_size,
-                         mlp_ratio=self.mlp_ratio,
-                         qkv_bias=qkv_bias, qk_scale=qk_scale,
-                         drop=drop_rate, attn_drop=attn_drop_rate,
-                         drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],  # no impact on SR results
-                         norm_layer=norm_layer,
-                         downsample=None,
-                         use_checkpoint=use_checkpoint,
-                         img_size=img_size,
-                         patch_size=patch_size,
-                         resi_connection=resi_connection
-                         )
-            self.layers.append(layer)
+        layer = RSTB(dim=embed_dim,
+                        input_resolution=(patches_resolution[0],
+                                        patches_resolution[1]),
+                        depth=depths[i_layer],
+                        num_heads=num_heads[i_layer],
+                        window_size=window_size,
+                        mlp_ratio=self.mlp_ratio,
+                        qkv_bias=qkv_bias, qk_scale=qk_scale,
+                        drop=drop_rate, attn_drop=attn_drop_rate,
+                        drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],  # no impact on SR results
+                        norm_layer=norm_layer,
+                        downsample=None,
+                        use_checkpoint=use_checkpoint,
+                        img_size=img_size,
+                        patch_size=patch_size,
+                        resi_connection=resi_connection
+                        )
+        self.layers.append(layer)
+
         self.norm = norm_layer(self.num_features)
 
         # build the last conv layer in deep feature extraction

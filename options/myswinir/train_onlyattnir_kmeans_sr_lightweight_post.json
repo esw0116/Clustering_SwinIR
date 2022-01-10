@@ -32,12 +32,13 @@
   }
 
   , "netG": {
-    "net_type": "parallelkmeans" 
+    "net_type": "kmeanspost" 
     , "upscale": 2                      // 2 | 3  | 4
     , "in_chans": 3 
     , "img_size": 64
-    , "window_size": 8  
-    , "img_range": 1.0 
+    , "window_size": 8
+    , "num_groups": 16
+    , "img_range": 1.0
     , "depths": [6, 6, 6, 6]
     , "embed_dim": 60 
     , "num_heads": [6, 6, 6, 6]

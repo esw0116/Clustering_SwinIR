@@ -17,48 +17,6 @@ def define_G(opt):
     opt_net = opt['netG']
     net_type = opt_net['net_type']
 
-
-    # ----------------------------------------
-    # denoising task
-    # ----------------------------------------
-
-    # ----------------------------------------
-    # DnCNN
-    # ----------------------------------------
-    if net_type == 'dncnn':
-        from models.network_dncnn import DnCNN as net
-        netG = net(in_nc=opt_net['in_nc'],
-                   out_nc=opt_net['out_nc'],
-                   nc=opt_net['nc'],
-                   nb=opt_net['nb'],  # total number of conv layers
-                   act_mode=opt_net['act_mode'])
-
-    # ----------------------------------------
-    # Flexible DnCNN
-    # ----------------------------------------
-    elif net_type == 'fdncnn':
-        from models.network_dncnn import FDnCNN as net
-        netG = net(in_nc=opt_net['in_nc'],
-                   out_nc=opt_net['out_nc'],
-                   nc=opt_net['nc'],
-                   nb=opt_net['nb'],  # total number of conv layers
-                   act_mode=opt_net['act_mode'])
-
-    # ----------------------------------------
-    # FFDNet
-    # ----------------------------------------
-    elif net_type == 'ffdnet':
-        from models.network_ffdnet import FFDNet as net
-        netG = net(in_nc=opt_net['in_nc'],
-                   out_nc=opt_net['out_nc'],
-                   nc=opt_net['nc'],
-                   nb=opt_net['nb'],
-                   act_mode=opt_net['act_mode'])
-
-    # ----------------------------------------
-    # others
-    # ----------------------------------------
-
     # ----------------------------------------
     # super-resolution task
     # ----------------------------------------
@@ -66,7 +24,7 @@ def define_G(opt):
     # ----------------------------------------
     # SRMD
     # ----------------------------------------
-    elif net_type == 'srmd':
+    if net_type == 'srmd':
         from models.network_srmd import SRMD as net
         netG = net(in_nc=opt_net['in_nc'],
                    out_nc=opt_net['out_nc'],
@@ -313,20 +271,7 @@ def define_G(opt):
                    img_size=opt_net['img_size'],
                    window_size=opt_net['window_size'],
                    img_range=opt_net['img_range'],
-                   depths=opt_net['depths'],
-                   embed_dim=opt_net['embed_dim'],
-                   num_heads=opt_net['num_heads'],
-                   mlp_ratio=opt_net['mlp_ratio'],
-                   upsampler=opt_net['upsampler'],
-                   resi_connection=opt_net['resi_connection'])
-
-    elif net_type == 'parallelkmeans':
-        from models.network_onlyattnnoir_kmeans_parallel import SwinIR as net
-        netG = net(upscale=opt_net['upscale'],
-                   in_chans=opt_net['in_chans'],
-                   img_size=opt_net['img_size'],
-                   window_size=opt_net['window_size'],
-                   img_range=opt_net['img_range'],
+                   num_groups=opt_net['num_groups'],
                    depths=opt_net['depths'],
                    embed_dim=opt_net['embed_dim'],
                    num_heads=opt_net['num_heads'],
@@ -335,13 +280,14 @@ def define_G(opt):
                    resi_connection=opt_net['resi_connection'])
 
 
-    elif net_type == 'parallelkmeanspost':
-        from models.network_onlyattnnoir_kmeans_parallel_post import SwinIR as net
+    elif net_type == 'kmeanspost':
+        from models.network_onlyattnnoir_kmeans_post import SwinIR as net
         netG = net(upscale=opt_net['upscale'],
                    in_chans=opt_net['in_chans'],
                    img_size=opt_net['img_size'],
                    window_size=opt_net['window_size'],
                    img_range=opt_net['img_range'],
+                   num_groups=opt_net['num_groups'],
                    depths=opt_net['depths'],
                    embed_dim=opt_net['embed_dim'],
                    num_heads=opt_net['num_heads'],
@@ -349,13 +295,14 @@ def define_G(opt):
                    upsampler=opt_net['upsampler'],
                    resi_connection=opt_net['resi_connection'])
 
-    elif net_type == 'parallelkmeanspostblock':
-        from models.network_onlyattnnoir_kmeans_parallel_postblock import SwinIR as net
+    elif net_type == 'kmeanspostblock':
+        from models.network_onlyattnnoir_kmeans_postblock import SwinIR as net
         netG = net(upscale=opt_net['upscale'],
                    in_chans=opt_net['in_chans'],
                    img_size=opt_net['img_size'],
                    window_size=opt_net['window_size'],
                    img_range=opt_net['img_range'],
+                   num_groups=opt_net['num_groups'],
                    depths=opt_net['depths'],
                    embed_dim=opt_net['embed_dim'],
                    num_heads=opt_net['num_heads'],
@@ -363,13 +310,14 @@ def define_G(opt):
                    upsampler=opt_net['upsampler'],
                    resi_connection=opt_net['resi_connection'])
 
-    elif net_type == 'parallelkmeansblock':
-        from models.network_onlyattnnoir_kmeans_parallel_block import SwinIR as net
+    elif net_type == 'kmeansblock':
+        from models.network_onlyattnnoir_kmeans_block import SwinIR as net
         netG = net(upscale=opt_net['upscale'],
                    in_chans=opt_net['in_chans'],
                    img_size=opt_net['img_size'],
                    window_size=opt_net['window_size'],
                    img_range=opt_net['img_range'],
+                   num_groups=opt_net['num_groups'],
                    depths=opt_net['depths'],
                    embed_dim=opt_net['embed_dim'],
                    num_heads=opt_net['num_heads'],
@@ -377,13 +325,14 @@ def define_G(opt):
                    upsampler=opt_net['upsampler'],
                    resi_connection=opt_net['resi_connection'])
 
-    elif net_type == 'parallelkmeanslastblock':
-        from models.network_onlyattnnoir_kmeans_parallel_lastblock import SwinIR as net
+    elif net_type == 'kmeanslastblock':
+        from models.network_onlyattnnoir_kmeans_lastblock import SwinIR as net
         netG = net(upscale=opt_net['upscale'],
                    in_chans=opt_net['in_chans'],
                    img_size=opt_net['img_size'],
                    window_size=opt_net['window_size'],
                    img_range=opt_net['img_range'],
+                   num_groups=opt_net['num_groups'],
                    depths=opt_net['depths'],
                    embed_dim=opt_net['embed_dim'],
                    num_heads=opt_net['num_heads'],
