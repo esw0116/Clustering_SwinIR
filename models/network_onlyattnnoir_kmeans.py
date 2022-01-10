@@ -307,12 +307,14 @@ class WindowAttention(nn.Module):
         # trunc_normal_(self.relative_position_bias_table, std=.02)
         self.softmax = nn.Softmax(dim=-1)
 
-    def forward(self, x, mask=None, attn_labels=None, x_windows=None, keep_v=False):
+    def forward(self, x, mask=None, labels=None, attn_labels=None, x_windows=None, keep_v=False):
         """
         Args:
             x: input features with shape of (num_windows*B, N, C)
             mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
         """
+        # my_start = torch.cuda.Event(enable_timing=True)
+        # my_end = torch.cuda.Event(enable_timing=True)
         if keep_v:
             B_, N, C = x.shape
             B__, N_, C_ = x_windows.shape
@@ -328,8 +330,26 @@ class WindowAttention(nn.Module):
             attn_ = attn_.flatten(2,3)
             attn_labels = attn_labels.flatten(1,2)
 
+            # my_start.record()
             attn = attn_.gather(dim=2, index=attn_labels.view(B__, 1, -1).repeat(1,6,1))
             attn = attn.view(B_, self.num_heads, N_, N_)
+            # my_end.record()
+            # torch.cuda.synchronize()
+            # print(
+            #     'clustering time-second',
+            #     my_start.elapsed_time(my_end),
+            # )
+
+            '''
+            print(labels.shape)
+            print(attn_.shape)
+            print(attn.shape)
+
+            print(attn[0,0,0,0]-attn_[0,0,N*labels[0,0]+labels[0,0]])
+            print(attn[0,0,0,1]-attn_[0,0,N*labels[0,0]+labels[0,1]])
+            print(attn[0,0,1,0]-attn_[0,0,N*labels[0,1]+labels[0,0]])
+            print(attn[0,0,1,1]-attn_[0,0,N*labels[0,1]+labels[0,1]])
+            '''
 
             # relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
             #     self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
@@ -445,7 +465,7 @@ class ClusteredTransformerBlock(nn.Module):
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
-    def forward(self, x, x_size, attn_labels=None, x_windows=None, keep_v=False):
+    def forward(self, x, x_size, labels=None, attn_labels=None, x_windows=None, keep_v=False):
         # H, W = x_size
         # B, L, C = x.shape
 
@@ -455,7 +475,7 @@ class ClusteredTransformerBlock(nn.Module):
             shortcut = x
 
         # W-MSA/SW-MSA (to be compatible for testing on images whose shapes are the multiple of window size
-        x = self.attn(x, mask=None, attn_labels=attn_labels, x_windows=x_windows, keep_v=keep_v)  # nW*B, L, C
+        x = self.attn(x, mask=None, labels=labels, attn_labels=attn_labels, x_windows=x_windows, keep_v=keep_v)  # nW*B, L, C
 
         # FFN
         x = shortcut + self.drop_path(x)
@@ -697,7 +717,7 @@ class BasicLayer(nn.Module):
         self.depth = depth
         self.use_checkpoint = use_checkpoint
         self.window_size = window_size
-        self.n_buckets = 17 # default : 16
+        self.n_buckets = 16
         self.clustering = Clustering(self.n_buckets, n_init=1)
 
         # build blocks
@@ -736,6 +756,9 @@ class BasicLayer(nn.Module):
         cluster = torch.cuda.Event(enable_timing=True)
         trans2 = torch.cuda.Event(enable_timing=True)
         end = torch.cuda.Event(enable_timing=True)
+
+        # my_start = torch.cuda.Event(enable_timing=True)
+        # my_end = torch.cuda.Event(enable_timing=True)
         start.record()
 
         for i, blk in enumerate(self.blocks):
@@ -762,22 +785,31 @@ class BasicLayer(nn.Module):
         for i in range(b):
             # print('{}/{}'.format(i, b))
             _, labels[i] = self.clustering.fit(x_windows[i])
+            # it takes too much time
             for j in range(self.n_buckets):
                 x_centers[i,j] = torch.mean(x_windows[i, labels[i]==j], dim=0)
         labels = labels.long()
 
+        # my_start.record()
         attn_labels = torch.zeros((b, l, l)).type_as(labels)
         for i in range(b):
             # attn_labels[i, j, :] = self.n_buckets*labels[i,j] + labels[i,:]
             grid_x, grid_y = torch.meshgrid(labels[i]*self.n_buckets, labels[i])
             attn_labels[i, :, :] = grid_x + grid_y
+        # my_end.record()
+        # torch.cuda.synchronize()
+
+        # print(
+        #     'clustering time',
+        #     my_start.elapsed_time(my_end),
+        # )
 
         cluster.record()
         torch.cuda.synchronize()
 
         for i, blk in enumerate(self.post_blocks):
             if self.use_checkpoint:
-                x_centers = checkpoint.checkpoint(blk, x_centers, x_size)
+                x_centers = checkpoint.checkpoint(blk, x_centers, x_size) # TODO
             else:
                 x_windows = blk(x_centers, x_size, attn_labels=attn_labels, x_windows=x_windows, keep_v=True)
 
@@ -785,7 +817,6 @@ class BasicLayer(nn.Module):
         torch.cuda.synchronize()
 
         # x = x_centers.gather(dim=1, index=labels.view(*labels.size(), 1).repeat(1,1,c))
-
         '''
         abcd.record()
         torch.cuda.synchronize()
