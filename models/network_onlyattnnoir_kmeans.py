@@ -314,13 +314,13 @@ class WindowAttention(nn.Module):
         # trunc_normal_(self.relative_position_bias_table, std=.02)
         self.softmax = nn.Softmax(dim=-1)
 
-    def forward(self, x, mask=None, labels=None, attn_labels=None, x_windows=None, keep_v=False):
+    def forward(self, x, mask=None, labels=None, attn_labels=None, x_windows=None):
         """
         Args:
             x: input features with shape of (num_windows*B, N, C)
             mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
         """
-        if keep_v:
+        if self.keep_v:
             B_, N, C = x.shape
             B__, N_, C_ = x_windows.shape
 
@@ -404,7 +404,7 @@ class WindowAttention(nn.Module):
     def extra_repr(self) -> str:
         return f'dim={self.dim}, window_size={self.window_size}, num_heads={self.num_heads}'
 
-    def flops(self, N):
+    def flops(self, N, M=None):
         # calculate flops for 1 window with token length of N
         flops = 0
         # qkv = self.qkv(x)
@@ -412,7 +412,10 @@ class WindowAttention(nn.Module):
         # attn = (q @ k.transpose(-2, -1))
         flops += self.num_heads * N * (self.dim // self.num_heads) * N
         #  x = (attn @ v)
-        flops += self.num_heads * N * N * (self.dim // self.num_heads)
+        if self.keep_v:
+            flops += self.num_heads * M * M * (self.dim // self.num_heads)
+        else:
+            flops += self.num_heads * N * N * (self.dim // self.num_heads)
         # x = self.proj(x)
         flops += N * self.dim * self.dim
         return flops
@@ -445,6 +448,7 @@ class ClusteredTransformerBlock(nn.Module):
         self.input_resolution = input_resolution
         self.window_size = window_size
         self.num_heads = num_heads
+        self.keep_v = keep_v
         self.num_groups = num_groups
         self.shift_size = shift_size
         self.mlp_ratio = mlp_ratio
@@ -456,7 +460,7 @@ class ClusteredTransformerBlock(nn.Module):
 
         self.norm1 = norm_layer(dim)
         self.attn = WindowAttention(
-            dim, window_size=(self.window_size, 1), num_heads=num_heads, keep_v=keep_v,
+            dim, window_size=(num_groups, 1), num_heads=num_heads, keep_v=keep_v,
             qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
 
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
@@ -464,17 +468,17 @@ class ClusteredTransformerBlock(nn.Module):
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
-    def forward(self, x, x_size, labels=None, attn_labels=None, x_windows=None, keep_v=False):
+    def forward(self, x, x_size, labels=None, attn_labels=None, x_windows=None):
         # H, W = x_size
         # B, L, C = x.shape
 
-        if keep_v:
+        if self.keep_v:
             shortcut = x_windows
         else:
             shortcut = x
 
         # W-MSA/SW-MSA (to be compatible for testing on images whose shapes are the multiple of window size
-        x = self.attn(x, mask=None, labels=labels, attn_labels=attn_labels, x_windows=x_windows, keep_v=keep_v)  # nW*B, L, C
+        x = self.attn(x, mask=None, labels=labels, attn_labels=attn_labels, x_windows=x_windows)  # nW*B, L, C
 
         # FFN
         x = shortcut + self.drop_path(x)
@@ -493,7 +497,7 @@ class ClusteredTransformerBlock(nn.Module):
         flops += self.dim * H * W
         # W-MSA/SW-MSA
         nW = H * W / self.window_size / self.window_size
-        flops += nW * self.attn.flops(self.num_groups)
+        flops += nW * self.attn.flops(self.num_groups, self.window_size*self.window_size)
         # mlp
         flops += 2 * H * self.dim * self.dim * self.mlp_ratio
         # norm2
@@ -751,7 +755,7 @@ class BasicLayer(nn.Module):
         else:
             self.downsample = None
 
-    def forward(self, x, x_size, print_time=True):
+    def forward(self, x, x_size, print_time=False):
         if print_time:
             start = torch.cuda.Event(enable_timing=True)
             trans1 = torch.cuda.Event(enable_timing=True)
@@ -793,7 +797,7 @@ class BasicLayer(nn.Module):
                 x_centers = checkpoint.checkpoint(blk, x_centers, x_size) # To be checked
             else:
                 if self.keep_v:
-                    x_windows = blk(x_centers, x_size, attn_labels=attn_labels, x_windows=x_windows, keep_v=self.keep_v)
+                    x_windows = blk(x_centers, x_size, attn_labels=attn_labels, x_windows=x_windows)
                 else:
                     x_centers = blk(x_centers, x_size)
 
@@ -866,7 +870,7 @@ class RSTB(nn.Module):
         resi_connection: The convolutional block before residual connection.
     """
 
-    def __init__(self, dim, input_resolution, depth, num_heads, window_size, num_groups=16,
+    def __init__(self, dim, input_resolution, depth, num_heads, window_size, keep_v=False, num_groups=16,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False,
                  img_size=224, patch_size=4, resi_connection='1conv'):
@@ -880,6 +884,7 @@ class RSTB(nn.Module):
                                          depth=depth,
                                          num_heads=num_heads,
                                          window_size=window_size,
+                                         keep_v=keep_v,
                                          num_groups=num_groups,
                                          mlp_ratio=mlp_ratio,
                                          qkv_bias=qkv_bias, qk_scale=qk_scale,
@@ -1076,7 +1081,7 @@ class SwinIR(nn.Module):
     """
 
     def __init__(self, img_size=64, patch_size=1, in_chans=3,
-                 embed_dim=96, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6], num_groups=16,
+                 embed_dim=96, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6], keep_v=False, num_groups=16,
                  window_size=7, mlp_ratio=4., qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
@@ -1141,6 +1146,7 @@ class SwinIR(nn.Module):
                          depth=depths[i_layer],
                          num_heads=num_heads[i_layer],
                          window_size=window_size,
+                         keep_v=keep_v, 
                          num_groups=num_groups,
                          mlp_ratio=self.mlp_ratio,
                          qkv_bias=qkv_bias, qk_scale=qk_scale,
