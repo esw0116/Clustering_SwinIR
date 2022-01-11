@@ -798,7 +798,7 @@ class BasicClusterLayer(nn.Module):
         # build blocks
         self.blocks = nn.ModuleList([
             ClusteredTransformerBlock(dim=dim, input_resolution=input_resolution,
-                                num_heads=num_heads, window_size=window_size, 
+                                num_heads=num_heads, window_size=window_size*2, 
                                 keep_v=keep_v,
                                 num_groups=self.num_groups,
                                 shift_size=0,

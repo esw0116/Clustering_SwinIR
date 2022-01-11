@@ -418,6 +418,8 @@ class WindowAttention(nn.Module):
             flops += self.num_heads * N * N * (self.dim // self.num_heads)
         # x = self.proj(x)
         flops += N * self.dim * self.dim
+        # print(self.keep_v, N, M, flops)
+        # input()
         return flops
 
 
@@ -738,7 +740,7 @@ class BasicLayer(nn.Module):
         
         self.post_blocks = nn.ModuleList([
             ClusteredTransformerBlock(dim=dim, input_resolution=input_resolution,
-                                num_heads=num_heads, window_size=window_size,
+                                num_heads=num_heads, window_size=window_size*2,
                                 num_groups=num_groups,
                                 keep_v=keep_v,
                                 shift_size=0,
