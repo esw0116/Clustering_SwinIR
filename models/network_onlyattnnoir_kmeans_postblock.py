@@ -791,6 +791,7 @@ class BasicClusterLayer(nn.Module):
         self.input_resolution = input_resolution
         self.depth = depth
         self.use_checkpoint = use_checkpoint
+        self.window_size = window_size
         self.keep_v = keep_v
         self.num_groups = num_groups
         self.clustering = Clustering(self.num_groups, n_init=1)
