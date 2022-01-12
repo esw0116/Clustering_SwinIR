@@ -154,9 +154,9 @@ class WindowAttention(nn.Module):
         # calculate flops for 1 window with token length of N
         flops = 0
         # qkv = self.qkv(x)
-        flops += N * self.dim * 3 * self.dim
+        flops += N * self.dim * self.dim
         # attn = (q @ k.transpose(-2, -1))
-        flops += self.num_heads * N * (self.dim // self.num_heads) * N
+        # flops += self.num_heads * N * (self.dim // self.num_heads) * N
         #  x = (attn @ v)
         flops += self.num_heads * N * N * (self.dim // self.num_heads)
         # x = self.proj(x)

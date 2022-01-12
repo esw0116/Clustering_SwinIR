@@ -504,7 +504,7 @@ class ClusteredTransformerBlock(nn.Module):
         # norm2
         flops += self.dim * H * W
         return flops
-
+        
 
 class SwinTransformerBlock(nn.Module):
     r""" Swin Transformer Block.
@@ -791,6 +791,7 @@ class BasicClusterLayer(nn.Module):
         self.input_resolution = input_resolution
         self.depth = depth
         self.use_checkpoint = use_checkpoint
+        self.window_size = window_size
         self.keep_v = keep_v
         self.num_groups = num_groups
         self.clustering = Clustering(self.num_groups, n_init=1)
@@ -1200,8 +1201,8 @@ class SwinIR(nn.Module):
     """
 
     def __init__(self, img_size=64, patch_size=1, in_chans=3,
-                 embed_dim=96, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6], keep_v=False, num_groups=16,
-                 window_size=7, mlp_ratio=4., qkv_bias=True, qk_scale=None,
+                 embed_dim=96, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6], blocks=['RPCTB','RTB', 'RPCTB','RTB'], num_groups=16, 
+                 window_size=7, mlp_ratio=4., keep_v=False, qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
                  use_checkpoint=False, upscale=2, img_range=1., upsampler='', resi_connection='1conv',
@@ -1257,27 +1258,15 @@ class SwinIR(nn.Module):
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, sum(depths))]  # stochastic depth decay rule
 
         # build Residual Swin Transformer blocks (RSTB)
+        if isinstance(blocks, list):
+            assert len(blocks) == self.num_layers
+        else:
+            blocks = [blocks] * self.num_layers
+        
         self.layers = nn.ModuleList()
-        for i_layer in range(self.num_layers//2):
-            layer = RSTB(dim=embed_dim,
-                         input_resolution=(patches_resolution[0],
-                                           patches_resolution[1]),
-                         depth=depths[i_layer],
-                         num_heads=num_heads[i_layer],
-                         window_size=window_size,
-                         mlp_ratio=self.mlp_ratio,
-                         qkv_bias=qkv_bias, qk_scale=qk_scale,
-                         drop=drop_rate, attn_drop=attn_drop_rate,
-                         drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],  # no impact on SR results
-                         norm_layer=norm_layer,
-                         downsample=None,
-                         use_checkpoint=use_checkpoint,
-                         img_size=img_size,
-                         patch_size=patch_size,
-                         resi_connection=resi_connection
-                         )
-            self.layers.append(layer)
-            layer = RPCTB(dim=embed_dim,
+        for i_layer in range(self.num_layers):
+            if blocks[i_layer] == 'RPCTB':
+                layer = RPCTB(dim=embed_dim,
                          input_resolution=(patches_resolution[0],
                                            patches_resolution[1]),
                          depth=depths[i_layer],
@@ -1296,7 +1285,28 @@ class SwinIR(nn.Module):
                          patch_size=patch_size,
                          resi_connection=resi_connection
                          )
+            elif blocks[i_layer] == 'RTB':
+                layer = RSTB(dim=embed_dim,
+                         input_resolution=(patches_resolution[0],
+                                           patches_resolution[1]),
+                         depth=depths[i_layer],
+                         num_heads=num_heads[i_layer],
+                         window_size=window_size,
+                         mlp_ratio=self.mlp_ratio,
+                         qkv_bias=qkv_bias, qk_scale=qk_scale,
+                         drop=drop_rate, attn_drop=attn_drop_rate,
+                         drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],  # no impact on SR results
+                         norm_layer=norm_layer,
+                         downsample=None,
+                         use_checkpoint=use_checkpoint,
+                         img_size=img_size,
+                         patch_size=patch_size,
+                         resi_connection=resi_connection
+                         )
+            else:
+                raise NotImplementedError()
             self.layers.append(layer)
+
         self.norm = norm_layer(self.num_features)
 
         # build the last conv layer in deep feature extraction
@@ -1419,7 +1429,7 @@ class SwinIR(nn.Module):
         H, W = self.patches_resolution
         flops += H * W * 3 * self.embed_dim * 9
         flops += self.patch_embed.flops()
-        for i, layer in enumerate(self.layers):
+        for layer in self.layers:
             flops += layer.flops()
         flops += H * W * 3 * self.embed_dim * self.embed_dim
         flops += self.upsample.flops()

@@ -489,8 +489,12 @@ class BasicLayer(nn.Module):
 
     def flops(self):
         flops = 0
-        for blk in self.blocks:
+        for blk in self.blocks1:
             flops += blk.flops()
+        flops += self.patchmerge.flops()
+        for blk in self.blocks2:
+            flops += blk.flops()
+        flops += self.patchsplit.flops()
         if self.downsample is not None:
             flops += self.downsample.flops()
         return flops

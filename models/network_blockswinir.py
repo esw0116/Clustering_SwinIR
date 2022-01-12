@@ -453,8 +453,8 @@ class BasicLayer(nn.Module):
                                  norm_layer=norm_layer)
             for i in range(depth2)])
 
-        self.pathmerge = PatchMerging(input_resolution, dim, norm_layer)
-        self.pathsplit = PatchUnmerging(new_input_resolution, dim, norm_layer)
+        self.patchmerge = PatchMerging(input_resolution, dim, norm_layer)
+        self.patchsplit = PatchUnmerging(new_input_resolution, dim, norm_layer)
 
         # patch merging layer
         if downsample is not None:
@@ -469,7 +469,7 @@ class BasicLayer(nn.Module):
                 x = checkpoint.checkpoint(blk, x, x_size)
             else:
                 x = blk(x, x_size)
-        x = self.pathmerge(x, x_size)
+        x = self.patchmerge(x, x_size)
         # print('Merge', x.size())
         h, w = x_size
         h, w = h//2, w//2
@@ -478,7 +478,7 @@ class BasicLayer(nn.Module):
                 x = checkpoint.checkpoint(blk, x, (h, w))
             else:
                 x = blk(x, (h, w))
-        x = self.pathsplit(x, x_size)
+        x = self.patchsplit(x, x_size)
         # print('Unmerge', x.size())
         if self.downsample is not None:
             x = self.downsample(x)
@@ -489,8 +489,12 @@ class BasicLayer(nn.Module):
 
     def flops(self):
         flops = 0
-        for blk in self.blocks:
+        for blk in self.blocks1:
             flops += blk.flops()
+        flops += self.patchmerge.flops()
+        for blk in self.blocks2:
+            flops += blk.flops()
+        flops += self.patchsplit.flops()
         if self.downsample is not None:
             flops += self.downsample.flops()
         return flops

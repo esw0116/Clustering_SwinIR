@@ -1,8 +1,8 @@
 import torch
-from models import network_onlyattnnoir_kmeans
+from models.network_onlyattnnoir import SwinIR
 
 def main():
-    net = network_onlyattnnoir_kmeans.SwinIR(window_size=8, upsampler='pixelshuffledirect')
+    net = SwinIR(window_size=8, upsampler='pixelshuffledirect')
     net.cuda()
     
     #x = torch.randn(8, 3, 96, 96).cuda()

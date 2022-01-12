@@ -32,14 +32,16 @@
   }
 
   , "netG": {
-    "net_type": "kmeansblock" 
+    "net_type": "block_kmeans"
     , "upscale": 2                      // 2 | 3  | 4
     , "in_chans": 3 
     , "img_size": 64
     , "window_size": 8
-    , "img_range": 1.0
     , "num_groups": 16
+    , "img_range": 1.0
     , "depths": [6, 6, 6, 6]
+    , "blocks":["RTB","RPCTB","RTB","RPCTB"]
+    , "keep_v": false
     , "embed_dim": 60 
     , "num_heads": [6, 6, 6, 6]
     , "mlp_ratio": 2 
