@@ -782,7 +782,7 @@ class BasicClusterLayer(nn.Module):
         use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False.
     """
 
-    def __init__(self, dim, input_resolution, depth, num_heads, window_size, keep_v=False, num_groups=16,
+    def __init__(self, dim, input_resolution, depth, num_heads, window_size, keep_v=False, recycle=True, num_groups=16,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False):
 
@@ -793,6 +793,7 @@ class BasicClusterLayer(nn.Module):
         self.use_checkpoint = use_checkpoint
         self.window_size = window_size
         self.keep_v = keep_v
+        self.recycle = recycle
         self.num_groups = num_groups
         self.clustering = Clustering(self.num_groups, n_init=1)
 
@@ -830,19 +831,19 @@ class BasicClusterLayer(nn.Module):
         x_windows = x_windows.flatten(1,2)
         b, l, c = x_windows.shape
 
-        x_centers, labels = self.clustering.fit(x_windows, enable_gradient=True)
-
         if print_time:
             cluster.record()
             torch.cuda.synchronize()
+        
+        for j, blk in enumerate(self.blocks):
+            if j == 0  or (not self.recycle):
+                x_centers, labels = self.clustering.fit(x_windows, enable_gradient=True)
+                if self.keep_v:
+                    attn_labels = torch.zeros((b, l, l)).type_as(labels)
+                    for i in range(b):
+                        grid_x, grid_y = torch.meshgrid(labels[i]*self.num_groups, labels[i])
+                        attn_labels[i, :, :] = grid_x + grid_y
             
-        if self.keep_v:
-            attn_labels = torch.zeros((b, l, l)).type_as(labels)
-            for i in range(b):
-                grid_x, grid_y = torch.meshgrid(labels[i]*self.num_groups, labels[i])
-                attn_labels[i, :, :] = grid_x + grid_y
-
-        for blk in self.blocks:
             if self.use_checkpoint:
                 x_centers = checkpoint.checkpoint(blk, x_centers, x_size)
             else:
@@ -991,7 +992,7 @@ class RPCTB(nn.Module):
         resi_connection: The convolutional block before residual connection.
     """
 
-    def __init__(self, dim, input_resolution, depth, num_heads, window_size, keep_v=False, num_groups=16,
+    def __init__(self, dim, input_resolution, depth, num_heads, window_size, keep_v=False, recycle=True, num_groups=16,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False,
                  img_size=224, patch_size=4, resi_connection='1conv'):
@@ -1006,6 +1007,7 @@ class RPCTB(nn.Module):
                                          num_heads=num_heads,
                                          window_size=window_size,
                                          keep_v=keep_v,
+                                         recycle=recycle,
                                          num_groups=num_groups,
                                          mlp_ratio=mlp_ratio,
                                          qkv_bias=qkv_bias, qk_scale=qk_scale,
@@ -1202,7 +1204,7 @@ class SwinIR(nn.Module):
 
     def __init__(self, img_size=64, patch_size=1, in_chans=3,
                  embed_dim=96, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6], blocks=['RPCTB','RTB', 'RPCTB','RTB'], num_groups=16, 
-                 window_size=7, mlp_ratio=4., keep_v=False, qkv_bias=True, qk_scale=None,
+                 window_size=7, mlp_ratio=4., keep_v=False, recycle=True, qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
                  use_checkpoint=False, upscale=2, img_range=1., upsampler='', resi_connection='1conv',
@@ -1273,6 +1275,7 @@ class SwinIR(nn.Module):
                          num_heads=num_heads[i_layer],
                          window_size=window_size,
                          keep_v=keep_v,
+                         recycle=recycle,
                          num_groups=num_groups,
                          mlp_ratio=self.mlp_ratio,
                          qkv_bias=qkv_bias, qk_scale=qk_scale,

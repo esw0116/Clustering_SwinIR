@@ -42,6 +42,7 @@
     , "depths": [6, 6, 6, 6]
     , "blocks":["RPCTB","RTB","RPCTB","RTB"]
     , "keep_v": true
+    , "recycle": true
     , "embed_dim": 60 
     , "num_heads": [6, 6, 6, 6]
     , "mlp_ratio": 2 
