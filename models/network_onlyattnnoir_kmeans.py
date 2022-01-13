@@ -12,6 +12,7 @@ import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 from torch.nn.parallel import DataParallel, DistributedDataParallel
+import numpy as np
 
 
 
@@ -712,7 +713,7 @@ class BasicLayer(nn.Module):
         use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False.
     """
 
-    def __init__(self, dim, input_resolution, depth, num_heads, window_size, keep_v=False, num_groups=16,
+    def __init__(self, dim, input_resolution, depth, num_heads, window_size, keep_v=False, recycle=True, num_groups=16,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False):
 
@@ -724,6 +725,7 @@ class BasicLayer(nn.Module):
         self.window_size = window_size
         self.clustering = Clustering(num_groups, n_init=1)
         self.keep_v = keep_v
+        self.recycle = recycle
         self.num_groups = num_groups
 
         # build blocks
@@ -757,7 +759,7 @@ class BasicLayer(nn.Module):
         else:
             self.downsample = None
 
-    def forward(self, x, x_size, print_time=False):
+    def forward(self, x, x_size, print_time=True): # False
         if print_time:
             start = torch.cuda.Event(enable_timing=True)
             trans1 = torch.cuda.Event(enable_timing=True)
@@ -782,19 +784,31 @@ class BasicLayer(nn.Module):
         x_windows = window_partition(x, self.window_size*2)  # nt*B, token_length, C
         x_windows = x_windows.flatten(1,2)
         b, l, c = x_windows.shape
-        x_centers, labels = self.clustering.fit(x_windows, enable_gradient=True)
 
         if print_time:
-            cluster.record()
+            cluster.record() # should be modified
             torch.cuda.synchronize()
+        
+        for j, blk in enumerate(self.post_blocks):
+            if j == 0:
+                x_centers, labels = self.clustering.fit(x_windows, enable_gradient=True)
+            elif not self.recycle:
+                x_centers, labels = self.clustering.fit(x_windows, enable_gradient=True)
 
-        if self.keep_v:
-            attn_labels = torch.zeros((b, l, l)).type_as(labels)
-            for i in range(b):
-                grid_x, grid_y = torch.meshgrid(labels[i]*self.num_groups, labels[i])
-                attn_labels[i, :, :] = grid_x + grid_y
+            if self.keep_v and (j == 0 or not self.recycle):
+                labels_f = labels.flatten(0,1)
+                grid_x, grid_y = torch.meshgrid(labels_f*self.num_groups, labels_f)
+                grid_xy = grid_x + grid_y
+                s=(range(b), np.s_[:], range(b), np.s_[:])
+                attn_labels = grid_xy.reshape(b, l, b, l)[s]
 
-        for blk in self.post_blocks:
+                '''
+                attn_labels = torch.zeros((b, l, l)).type_as(labels)
+                for i in range(b):
+                    grid_x, grid_y = torch.meshgrid(labels[i]*self.num_groups, labels[i])
+                    attn_labels[i, :, :] = grid_x + grid_y
+                '''
+
             if self.use_checkpoint:
                 x_centers = checkpoint.checkpoint(blk, x_centers, x_size) # To be checked
             else:
@@ -872,7 +886,7 @@ class RSTB(nn.Module):
         resi_connection: The convolutional block before residual connection.
     """
 
-    def __init__(self, dim, input_resolution, depth, num_heads, window_size, keep_v=False, num_groups=16,
+    def __init__(self, dim, input_resolution, depth, num_heads, window_size, keep_v=False, recycle=True, num_groups=16,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False,
                  img_size=224, patch_size=4, resi_connection='1conv'):
@@ -887,6 +901,7 @@ class RSTB(nn.Module):
                                          num_heads=num_heads,
                                          window_size=window_size,
                                          keep_v=keep_v,
+                                         recycle=recycle,
                                          num_groups=num_groups,
                                          mlp_ratio=mlp_ratio,
                                          qkv_bias=qkv_bias, qk_scale=qk_scale,
@@ -1083,7 +1098,7 @@ class SwinIR(nn.Module):
     """
 
     def __init__(self, img_size=64, patch_size=1, in_chans=3,
-                 embed_dim=96, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6], keep_v=False, num_groups=16,
+                 embed_dim=96, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6], keep_v=False, recycle=True, num_groups=16, # False
                  window_size=7, mlp_ratio=4., qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
@@ -1148,7 +1163,8 @@ class SwinIR(nn.Module):
                          depth=depths[i_layer],
                          num_heads=num_heads[i_layer],
                          window_size=window_size,
-                         keep_v=keep_v, 
+                         keep_v=keep_v,
+                         recycle=recycle,
                          num_groups=num_groups,
                          mlp_ratio=self.mlp_ratio,
                          qkv_bias=qkv_bias, qk_scale=qk_scale,
