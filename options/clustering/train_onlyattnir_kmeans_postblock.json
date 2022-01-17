@@ -1,8 +1,8 @@
 {
   "task": "onlyattnir_kmeans_sr_lightweight_x2"     //  classical image sr for x2/x3/x4. root/task/images-models-options
   , "model": "plain" // "plain" | "plain2" if two inputs
-  , "gpu_ids": [7] //[0,1,2,3]
-  , "dist": false //true
+  , "gpu_ids": [0,1,2,3]
+  , "dist": true
 
   , "scale": 2       // 2 | 3 | 4
   , "n_channels": 3  // broadcast to "datasets", 1 for grayscale, 3 for color
@@ -42,6 +42,7 @@
     , "depths": [6, 6, 6, 6]
     , "blocks":["RPCTB","RTB","RPCTB","RTB"]
     , "keep_v": false
+    , "recycle": true
     , "embed_dim": 60 
     , "num_heads": [6, 6, 6, 6]
     , "mlp_ratio": 2 

@@ -1,5 +1,5 @@
 {
-  "task": "onlyattnir_sr_lightweight_x2_shallow"     //  classical image sr for x2/x3/x4. root/task/images-models-options
+  "task": "onlyattnir_kmeans_sr_lightweight_x2"     //  classical image sr for x2/x3/x4. root/task/images-models-options
   , "model": "plain" // "plain" | "plain2" if two inputs
   , "gpu_ids": [0,1,2,3]
   , "dist": true
@@ -22,7 +22,7 @@
 
       , "dataloader_shuffle": true
       , "dataloader_num_workers": 16
-      , "dataloader_batch_size": 64      // Total batch size =8x8=64 in SwinIR
+      , "dataloader_batch_size": 32      // Total batch size =8x8=64 in SwinIR
     }
     , "test": {
       "name": "test_dataset"            // just name
@@ -32,14 +32,18 @@
   }
 
   , "netG": {
-    "net_type": "onlyattnir" 
+    "net_type": "block_kmeans" 
     , "upscale": 2                      // 2 | 3  | 4
     , "in_chans": 3 
     , "img_size": 64
-    , "window_size": 8  
-    , "img_range": 1.0 
+    , "window_size": 8
+    , "num_groups": 16
+    , "img_range": 1.0
     , "depths": [6, 6, 6, 6]
-    , "embed_dim": 48
+    , "blocks":["RPCTB","RTB","RPCTB","RTB"]
+    , "keep_v": true
+    , "recycle": false
+    , "embed_dim": 60 
     , "num_heads": [6, 6, 6, 6]
     , "mlp_ratio": 2 
     , "upsampler": "pixelshuffledirect"        // "pixelshuffle" | "pixelshuffledirect" | "nearest+conv" | null
@@ -55,13 +59,13 @@
     , "E_decay": 0.999                  // Exponential Moving Average for netG: set 0 to disable; default setting 0.999
 
     , "G_optimizer_type": "adam"        // fixed, adam is enough
-    , "G_optimizer_lr": 4e-4            // learning rate
+    , "G_optimizer_lr": 2e-4            // learning rate
     , "G_optimizer_wd": 0               // weight decay, default 0
     , "G_optimizer_clipgrad": null      // unused
     , "G_optimizer_reuse": true         // 
 
     , "G_scheduler_type": "MultiStepLR" // "MultiStepLR" is enough
-    , "G_scheduler_milestones": [125000, 200000, 225000, 237500, 250000]
+    , "G_scheduler_milestones": [250000, 400000, 450000, 475000, 500000]
     , "G_scheduler_gamma": 0.5
 
     , "G_regularizer_orthstep": null    // unused
@@ -73,6 +77,6 @@
     , "checkpoint_test": 2500           // for testing
     , "checkpoint_save": 2500           // for saving model
     , "checkpoint_print": 250           // for print
-    , "total_iters": 250000             // total iterations for training
+    , "total_iters": 500000             // total iterations for training
   }
 }

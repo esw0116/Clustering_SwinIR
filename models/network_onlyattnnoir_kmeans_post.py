@@ -658,7 +658,7 @@ class BasicLayer(nn.Module):
         self.depth = depth
         self.use_checkpoint = use_checkpoint
         self.window_size = window_size
-        self.clustering = Clustering(self.n_buckets, n_init=1)
+        self.clustering = Clustering(num_groups, n_init=1)
 
         # build blocks
         self.blocks = nn.ModuleList([
