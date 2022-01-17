@@ -59,13 +59,13 @@
     , "E_decay": 0.999                  // Exponential Moving Average for netG: set 0 to disable; default setting 0.999
 
     , "G_optimizer_type": "adam"        // fixed, adam is enough
-    , "G_optimizer_lr": 4e-4            // learning rate
+    , "G_optimizer_lr": 2e-4            // learning rate
     , "G_optimizer_wd": 0               // weight decay, default 0
     , "G_optimizer_clipgrad": null      // unused
     , "G_optimizer_reuse": true         // 
 
     , "G_scheduler_type": "MultiStepLR" // "MultiStepLR" is enough
-    , "G_scheduler_milestones": [125000, 200000, 225000, 237500, 250000]
+    , "G_scheduler_milestones": [250000, 400000, 450000, 475000, 500000]
     , "G_scheduler_gamma": 0.5
 
     , "G_regularizer_orthstep": null    // unused
@@ -77,6 +77,6 @@
     , "checkpoint_test": 2500           // for testing
     , "checkpoint_save": 2500           // for saving model
     , "checkpoint_print": 250           // for print
-    , "total_iters": 250000             // total iterations for training
+    , "total_iters": 500000             // total iterations for training
   }
 }
