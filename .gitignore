@@ -149,5 +149,6 @@ result
 results
 superresolution
 
-.tar
+*.tar
+*.pth
 nsmltrained_models
