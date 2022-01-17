@@ -14,6 +14,8 @@ from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 from torch.nn.parallel import DataParallel, DistributedDataParallel
 import numpy as np
 
+from srwarp import svf
+
 
 
 class PWD(nn.Module):
@@ -336,19 +338,25 @@ class WindowAttention(nn.Module):
             attn_ = attn_.flatten(2,3)
             attn_labels = attn_labels.flatten(1,2)
 
+            t1 = torch.cuda.Event(enable_timing=True)
+            t1.record()
+            torch.cuda.synchronize()
             attn = attn_.gather(dim=2, index=attn_labels.view(B__, 1, -1).repeat(1,self.num_heads,1))
             attn = attn.view(B_, self.num_heads, N_, N_)
+            t2 = torch.cuda.Event(enable_timing=True)
+            t2.record()
+            torch.cuda.synchronize()
+            print(f'attn_gather: {t1.elapsed_time(t2)}')
+            
+            # print(labels.shape)
+            # print(attn_.shape)
+            # print(attn.shape)
 
-            '''
-            print(labels.shape)
-            print(attn_.shape)
-            print(attn.shape)
-
-            print(attn[0,0,0,0]-attn_[0,0,N*labels[0,0]+labels[0,0]])
-            print(attn[0,0,0,1]-attn_[0,0,N*labels[0,0]+labels[0,1]])
-            print(attn[0,0,1,0]-attn_[0,0,N*labels[0,1]+labels[0,0]])
-            print(attn[0,0,1,1]-attn_[0,0,N*labels[0,1]+labels[0,1]])
-            '''
+            # print(attn[0,0,0,0]-attn_[0,0,N*labels[0,0]+labels[0,0]])
+            # print(attn[0,0,0,1]-attn_[0,0,N*labels[0,0]+labels[0,1]])
+            # print(attn[0,0,1,0]-attn_[0,0,N*labels[0,1]+labels[0,0]])
+            # print(attn[0,0,1,1]-attn_[0,0,N*labels[0,1]+labels[0,1]])
+            
 
             # relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
             #     self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
@@ -823,36 +831,16 @@ class BasicLayer(nn.Module):
                 x_centers, labels = self.clustering.fit(x_windows, enable_gradient=True)
             
             timer_list = self.measure_time(msg=f'tiling_{j}', timer_list=timer_list)
+
             if self.keep_v and (j == 0 or not self.recycle):
-                labels_f = labels.flatten(0,1)
-                grid_x, grid_y = torch.meshgrid(labels_f*self.num_groups, labels_f)
-                grid_xy = grid_x + grid_y
-                s=(range(b), np.s_[:], range(b), np.s_[:])
-                attn_labels = grid_xy.reshape(b, l, b, l)[s]
-
-
-                # attn_labels = torch.zeros((b, l, l)).type_as(labels)
-                # for i in range(b):
-                #     grid_x, grid_y = torch.meshgrid(labels[i]*self.num_groups, labels[i])
-                #     attn_labels[i, :, :] = grid_x + grid_y
-                
-                # save_dict = {
-                #     'labels': labels,
-                #     'b': b,
-                #     'l': l,
-                # }
-                # torch.save(save_dict, 'debug_input.pth')
-                # print('saved')
-                # input()
-                #my_cluster2.record()
-                #torch.cuda.synchronize()
+                attn_labels = svf.gather_2d(labels, self.num_groups)
 
             timer_list = self.measure_time(msg=f'block_{j}', timer_list=timer_list)
             if self.use_checkpoint:
                 x_centers = checkpoint.checkpoint(blk, x_centers, x_size) # To be checked
             else:
                 if self.keep_v:
-                    x_windows = blk(x_centers, x_size, attn_labels=attn_labels, x_windows=x_windows)
+                    x_windows = blk(x_centers, x_size, labels=labels, attn_labels=attn_labels, x_windows=x_windows)
                 else:
                     x_centers = blk(x_centers, x_size)
 

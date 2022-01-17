@@ -1,5 +1,5 @@
 import torch
-from models.network_onlyattnnoir import SwinIR
+from models.network_onlyattnnoir_kmeans_cuda import SwinIR
 
 def main():
     net = SwinIR(window_size=8, upsampler='pixelshuffledirect')
