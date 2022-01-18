@@ -3,6 +3,7 @@
 # Originally Written by Ze Liu, Modified by Jingyun Liang.
 # -----------------------------------------------------------------------------------
 import typing
+import numpy as np
 from matplotlib.pyplot import new_figure_manager
 from tqdm import tqdm
 import math
@@ -11,8 +12,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
-from torch.nn.parallel import DataParallel, DistributedDataParallel
 
+import imageio
+from srwarp import svf
 
 
 class PWD(nn.Module):
@@ -739,7 +741,7 @@ class BasicLayer(nn.Module):
         else:
             self.downsample = None
 
-    def forward(self, x, x_size):
+    def forward(self, x, x_size, print_time=False):
         for i, blk in enumerate(self.blocks):
             if self.use_checkpoint:
                 x = checkpoint.checkpoint(blk, x, x_size)
@@ -796,6 +798,10 @@ class BasicClusterLayer(nn.Module):
         self.recycle = recycle
         self.num_groups = num_groups
         self.clustering = Clustering(self.num_groups, n_init=1)
+        
+        self.color_r = {0: 0 , 1: 157, 2: 255, 3: 190, 4: 224, 5: 73, 6: 164, 7: 255, 8: 247, 9: 47, 10:  68, 11: 163, 12: 27, 13:   0, 14:  49, 15: 178}
+        self.color_g = {0: 0 , 1: 157, 2: 255, 3:  38, 4: 111, 5: 60, 6: 100, 7: 137, 8: 226, 9: 72, 10: 137, 11: 206, 12: 38, 13:  87, 14: 162, 15: 220}
+        self.color_b = {0: 0 , 1: 157, 2: 255, 3:  51, 4: 139, 5: 43, 6:  34, 7:  49, 8: 107, 9: 78, 10:  26, 11:  39, 12: 50, 13: 132, 14: 262, 15: 239}
 
         # build blocks
         self.blocks = nn.ModuleList([
@@ -817,12 +823,21 @@ class BasicClusterLayer(nn.Module):
         else:
             self.downsample = None
 
+    def measure_time(self, msg='', timer_list=None):
+        if timer_list is None:
+            return None
+
+        t = torch.cuda.Event(enable_timing=True)
+        t.record()
+        torch.cuda.synchronize()
+        timer_list.append((msg, t))
+        return timer_list
+
     def forward(self, x, x_size, print_time=False):
         if print_time:
-            start = torch.cuda.Event(enable_timing=True)
-            cluster = torch.cuda.Event(enable_timing=True)
-            trans = torch.cuda.Event(enable_timing=True)
-            start.record()
+            timer_list = []
+        else:
+            timer_list = None
 
         H, W = x_size
         B, L, C = x.shape
@@ -830,19 +845,14 @@ class BasicClusterLayer(nn.Module):
         x_windows = window_partition(x, self.window_size*2)  # nt*B, token_length, C
         x_windows = x_windows.flatten(1,2)
         b, l, c = x_windows.shape
-
-        if print_time:
-            cluster.record()
-            torch.cuda.synchronize()
         
         for j, blk in enumerate(self.blocks):
+            timer_list = self.measure_time(msg='First 3 blocks', timer_list=timer_list)
+
             if j == 0  or (not self.recycle):
                 x_centers, labels = self.clustering.fit(x_windows, enable_gradient=True)
                 if self.keep_v:
-                    attn_labels = torch.zeros((b, l, l)).type_as(labels)
-                    for i in range(b):
-                        grid_x, grid_y = torch.meshgrid(labels[i]*self.num_groups, labels[i])
-                        attn_labels[i, :, :] = grid_x + grid_y
+                    attn_labels = svf.gather_2d(labels, self.num_groups)
             
             if self.use_checkpoint:
                 x_centers = checkpoint.checkpoint(blk, x_centers, x_size)
@@ -851,10 +861,8 @@ class BasicClusterLayer(nn.Module):
                     x_windows = blk(x_centers, x_size, attn_labels=attn_labels, x_windows=x_windows)
                 else:
                     x_centers = blk(x_centers, x_size)
-
-        if print_time:
-            trans.record()
-            torch.cuda.synchronize()
+        
+        timer_list = self.measure_time(msg='window_partition', timer_list=timer_list)
 
         if self.keep_v:
             x = window_reverse(x_windows, self.window_size*2, H, W)
@@ -867,14 +875,24 @@ class BasicClusterLayer(nn.Module):
         
         x = x.reshape(B,L,C)
 
+        # my_labels = window_reverse(labels.view(-1, self.window_size*2, self.window_size*2, 1), self.window_size*2, H, W).squeeze(3).cpu().numpy()
+        # label_image_r = np.vectorize(self.color_r.get)(my_labels).astype('uint8')
+        # label_image_g = np.vectorize(self.color_g.get)(my_labels).astype('uint8')
+        # label_image_b = np.vectorize(self.color_b.get)(my_labels).astype('uint8')
+        # label_image = np.stack((label_image_r, label_image_g, label_image_b), axis=-1).squeeze(0)
+        # imageio.imwrite('./results/1.png', label_image)
+        # input()
         if self.downsample is not None:
             x = self.downsample(x)
 
-        if print_time:
-            print(
-                start.elapsed_time(cluster),
-                cluster.elapsed_time(trans),
-            )
+        timer_list = self.measure_time(msg='end', timer_list=timer_list)
+        if timer_list is not None:
+            for idx, (msg, t) in enumerate(timer_list):
+                if idx == len(timer_list) - 1:
+                    break
+
+                print(f'{msg}: {t.elapsed_time(timer_list[idx + 1][1])}')
+            print('done\n')
 
         return x
 
@@ -952,12 +970,12 @@ class RSTB(nn.Module):
             img_size=img_size, patch_size=patch_size, in_chans=0, embed_dim=dim,
             norm_layer=None)
 
-    def forward(self, x, x_size):
+    def forward(self, x, x_size, print_time=False):
         # y = self.patch_embed(self.conv(self.patch_unembed(self.residual_group(x, x_size), x_size)))
         # print('transformer', x)
         # x = x + y
         # return x
-        return self.patch_embed(self.conv(self.patch_unembed(self.residual_group(x, x_size), x_size))) + x
+        return self.patch_embed(self.conv(self.patch_unembed(self.residual_group(x, x_size, print_time), x_size))) + x
 
     def flops(self):
         flops = 0
@@ -1034,12 +1052,12 @@ class RPCTB(nn.Module):
             img_size=img_size, patch_size=patch_size, in_chans=0, embed_dim=dim,
             norm_layer=None)
 
-    def forward(self, x, x_size):
+    def forward(self, x, x_size, print_time=False):
         # y = self.patch_embed(self.conv(self.patch_unembed(self.residual_group(x, x_size), x_size)))
         # print('transformer', x)
         # x = x + y
         # return x
-        return self.patch_embed(self.conv(self.patch_unembed(self.residual_group(x, x_size), x_size))) + x
+        return self.patch_embed(self.conv(self.patch_unembed(self.residual_group(x, x_size, print_time), x_size))) + x
 
     def flops(self):
         flops = 0
@@ -1207,7 +1225,7 @@ class SwinIR(nn.Module):
                  window_size=7, mlp_ratio=4., keep_v=False, recycle=True, qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
-                 use_checkpoint=False, upscale=2, img_range=1., upsampler='', resi_connection='1conv',
+                 use_checkpoint=False, upscale=2, img_range=1., upsampler='pixelshuffledirect', resi_connection='1conv',
                  **kwargs):
         super(SwinIR, self).__init__()
         num_in_ch = in_chans
@@ -1375,23 +1393,21 @@ class SwinIR(nn.Module):
         x = F.pad(x, (0, mod_pad_w, 0, mod_pad_h), 'reflect')
         return x
 
-    def forward_features(self, x):
+    def forward_features(self, x, print_time=False):
         x_size = (x.shape[2], x.shape[3])
         x = self.patch_embed(x)
         if self.ape:
             x = x + self.absolute_pos_embed
         x = self.pos_drop(x)
 
-        for i, layer in enumerate(self.layers):
-            x = layer(x, x_size)
-            # print('trans', i, x)
+        for layer in self.layers:
+            x = layer(x, x_size, print_time)
 
         x = self.norm(x)  # B L C
         x = self.patch_unembed(x, x_size)
-
         return x
 
-    def forward(self, x):
+    def forward(self, x, print_time=False):
         H, W = x.shape[2:]
         x = self.check_image_size(x)
 
@@ -1401,18 +1417,18 @@ class SwinIR(nn.Module):
         if self.upsampler == 'pixelshuffle':
             # for classical SR
             x = self.conv_first(x)
-            x = self.conv_after_body(self.forward_features(x)) + x
+            x = self.conv_after_body(self.forward_features(x, print_time)) + x
             x = self.conv_before_upsample(x)
             x = self.conv_last(self.upsample(x))
         elif self.upsampler == 'pixelshuffledirect':
             # for lightweight SR
             x = self.conv_first(x)
-            x = self.conv_after_body(self.forward_features(x)) + x
+            x = self.conv_after_body(self.forward_features(x, print_time)) + x
             x = self.upsample(x)
         elif self.upsampler == 'nearest+conv':
             # for real-world SR
             x = self.conv_first(x)
-            x = self.conv_after_body(self.forward_features(x)) + x
+            x = self.conv_after_body(self.forward_features(x, print_time)) + x
             x = self.conv_before_upsample(x)
             x = self.lrelu(self.conv_up1(torch.nn.functional.interpolate(x, scale_factor=2, mode='nearest')))
             x = self.lrelu(self.conv_up2(torch.nn.functional.interpolate(x, scale_factor=2, mode='nearest')))
@@ -1420,7 +1436,7 @@ class SwinIR(nn.Module):
         else:
             # for image denoising and JPEG compression artifact reduction
             x_first = self.conv_first(x)
-            res = self.conv_after_body(self.forward_features(x_first)) + x_first
+            res = self.conv_after_body(self.forward_features(x_first, print_time)) + x_first
             x = x + self.conv_last(res)
 
         x = x / self.img_range + self.mean

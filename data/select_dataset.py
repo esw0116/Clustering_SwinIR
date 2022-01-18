@@ -35,6 +35,9 @@ def define_Dataset(dataset_opt, **kwargs):
     elif dataset_type in ['sr', 'super-resolution']:
         from data.dataset_sr import DatasetSR as D
 
+    elif dataset_type in ['srurban', 'super-resolution-urban']:
+        from data.dataset_srurban import DatasetSR as D
+    
     elif dataset_type in ['srman', 'super-resolution-manga']:
         from data.dataset_srman import DatasetSR as D
 

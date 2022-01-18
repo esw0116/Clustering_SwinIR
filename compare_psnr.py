@@ -4,7 +4,7 @@ import imageio
 import torch
 from torch.nn import functional as F
 import numpy as np
-import math
+import pandas as pd
 
 def main():
     parser = argparse.ArgumentParser()
@@ -31,6 +31,8 @@ def main():
     sum_mse = sum_mse / count
     sum_mse = sum_mse.reshape(args.window_size, args.window_size)
     psnr_mse = 20 * torch.log10(1 / torch.sqrt(sum_mse))
+    df = pd.DataFrame(psnr_mse.cpu().numpy())
+    df.to_csv(args.output_path)
     print(psnr_mse)
 
 def get_cropped_images(window_size, device, files):
