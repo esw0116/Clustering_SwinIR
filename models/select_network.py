@@ -13,7 +13,7 @@ from torch.nn import init
 # --------------------------------------------
 # Generator, netG, G
 # --------------------------------------------
-def define_G(opt):
+def define_G(opt, use_nsml):
     opt_net = opt['netG']
     net_type = opt_net['net_type']
 
@@ -311,7 +311,8 @@ def define_G(opt):
                    num_heads=opt_net['num_heads'],
                    mlp_ratio=opt_net['mlp_ratio'],
                    upsampler=opt_net['upsampler'],
-                   resi_connection=opt_net['resi_connection'])
+                   resi_connection=opt_net['resi_connection'],
+                   use_nsml = use_nsml)
 
     # ----------------------------------------
     # others

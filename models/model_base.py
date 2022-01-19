@@ -12,7 +12,7 @@ class ModelBase():
         self.device = torch.device('cuda' if opt['gpu_ids'] is not None else 'cpu')
         self.is_train = opt['is_train']        # training or not
         self.schedulers = []                   # schedulers
-
+        
     """
     # ----------------------------------------
     # Preparation before training with data

@@ -741,7 +741,7 @@ class BasicLayer(nn.Module):
         else:
             self.downsample = None
 
-    def forward(self, x, x_size, print_time=False):
+    def forward(self, x, x_size, **kwargs):
         for i, blk in enumerate(self.blocks):
             if self.use_checkpoint:
                 x = checkpoint.checkpoint(blk, x, x_size)
@@ -786,7 +786,7 @@ class BasicClusterLayer(nn.Module):
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size, keep_v=False, recycle=True, num_groups=16,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
-                 drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False):
+                 drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False, use_nsml=False):
 
         super().__init__()
         self.dim = dim
@@ -797,6 +797,8 @@ class BasicClusterLayer(nn.Module):
         self.keep_v = keep_v
         self.recycle = recycle
         self.num_groups = num_groups
+        self.use_nsml = use_nsml
+        
         self.clustering = Clustering(self.num_groups, n_init=1)
         
         self.color_r = {0: 0 , 1: 157, 2: 255, 3: 190, 4: 224, 5: 73, 6: 164, 7: 255, 8: 247, 9: 47, 10:  68, 11: 163, 12: 27, 13:   0, 14:  49, 15: 178}
@@ -833,7 +835,9 @@ class BasicClusterLayer(nn.Module):
         timer_list.append((msg, t))
         return timer_list
 
-    def forward(self, x, x_size, print_time=False):
+    def forward(self, x, x_size, **kwargs):
+        print_time = kwargs['print_time'] if 'print_time' in kwargs.keys() else False
+        imgsave_name = kwargs['imgsave_name'] if 'imgsave_name' in kwargs.keys() else None
         if print_time:
             timer_list = []
         else:
@@ -847,12 +851,18 @@ class BasicClusterLayer(nn.Module):
         b, l, c = x_windows.shape
         
         for j, blk in enumerate(self.blocks):
-            timer_list = self.measure_time(msg='First 3 blocks', timer_list=timer_list)
+            timer_list = self.measure_time(msg=f'Block_{j}', timer_list=timer_list)
 
             if j == 0  or (not self.recycle):
                 x_centers, labels = self.clustering.fit(x_windows, enable_gradient=True)
                 if self.keep_v:
-                    attn_labels = svf.gather_2d(labels, self.num_groups)
+                    if self.use_nsml:
+                        attn_labels = torch.zeros((b, l, l)).type_as(labels)
+                        for i in range(b):
+                            grid_x, grid_y = torch.meshgrid(labels[i]*self.num_groups, labels[i])
+                            attn_labels[i, :, :] = grid_x + grid_y
+                    else:
+                        attn_labels = svf.gather_2d(labels, self.num_groups)
             
             if self.use_checkpoint:
                 x_centers = checkpoint.checkpoint(blk, x_centers, x_size)
@@ -875,13 +885,14 @@ class BasicClusterLayer(nn.Module):
         
         x = x.reshape(B,L,C)
 
-        # my_labels = window_reverse(labels.view(-1, self.window_size*2, self.window_size*2, 1), self.window_size*2, H, W).squeeze(3).cpu().numpy()
-        # label_image_r = np.vectorize(self.color_r.get)(my_labels).astype('uint8')
-        # label_image_g = np.vectorize(self.color_g.get)(my_labels).astype('uint8')
-        # label_image_b = np.vectorize(self.color_b.get)(my_labels).astype('uint8')
-        # label_image = np.stack((label_image_r, label_image_g, label_image_b), axis=-1).squeeze(0)
-        # imageio.imwrite('./results/1.png', label_image)
-        # input()
+        if imgsave_name is not None:
+            my_labels = window_reverse(labels.view(-1, self.window_size*2, self.window_size*2, 1), self.window_size*2, H, W).squeeze(3).cpu().numpy()
+            label_image_r = np.vectorize(self.color_r.get)(my_labels).astype('uint8')
+            label_image_g = np.vectorize(self.color_g.get)(my_labels).astype('uint8')
+            label_image_b = np.vectorize(self.color_b.get)(my_labels).astype('uint8')
+            label_image = np.stack((label_image_r, label_image_g, label_image_b), axis=-1).squeeze(0)
+            imageio.imwrite(f'{imgsave_name}_groups.png', label_image)
+        
         if self.downsample is not None:
             x = self.downsample(x)
 
@@ -934,7 +945,7 @@ class RSTB(nn.Module):
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False,
-                 img_size=224, patch_size=4, resi_connection='1conv'):
+                 img_size=224, patch_size=4, resi_connection='1conv', use_nsml=False):
         super(RSTB, self).__init__()
 
         self.dim = dim
@@ -970,12 +981,8 @@ class RSTB(nn.Module):
             img_size=img_size, patch_size=patch_size, in_chans=0, embed_dim=dim,
             norm_layer=None)
 
-    def forward(self, x, x_size, print_time=False):
-        # y = self.patch_embed(self.conv(self.patch_unembed(self.residual_group(x, x_size), x_size)))
-        # print('transformer', x)
-        # x = x + y
-        # return x
-        return self.patch_embed(self.conv(self.patch_unembed(self.residual_group(x, x_size, print_time), x_size))) + x
+    def forward(self, x, x_size, **kwargs):
+        return self.patch_embed(self.conv(self.patch_unembed(self.residual_group(x, x_size, **kwargs), x_size))) + x
 
     def flops(self):
         flops = 0
@@ -1013,7 +1020,7 @@ class RPCTB(nn.Module):
     def __init__(self, dim, input_resolution, depth, num_heads, window_size, keep_v=False, recycle=True, num_groups=16,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False,
-                 img_size=224, patch_size=4, resi_connection='1conv'):
+                 img_size=224, patch_size=4, resi_connection='1conv', use_nsml=False):
         super(RPCTB, self).__init__()
 
         self.dim = dim
@@ -1033,7 +1040,8 @@ class RPCTB(nn.Module):
                                          drop_path=drop_path,
                                          norm_layer=norm_layer,
                                          downsample=downsample,
-                                         use_checkpoint=use_checkpoint)
+                                         use_checkpoint=use_checkpoint,
+                                         use_nsml=use_nsml)
 
         if resi_connection == '1conv':
             self.conv = nn.Conv2d(dim, dim, 3, 1, 1)
@@ -1052,12 +1060,8 @@ class RPCTB(nn.Module):
             img_size=img_size, patch_size=patch_size, in_chans=0, embed_dim=dim,
             norm_layer=None)
 
-    def forward(self, x, x_size, print_time=False):
-        # y = self.patch_embed(self.conv(self.patch_unembed(self.residual_group(x, x_size), x_size)))
-        # print('transformer', x)
-        # x = x + y
-        # return x
-        return self.patch_embed(self.conv(self.patch_unembed(self.residual_group(x, x_size, print_time), x_size))) + x
+    def forward(self, x, x_size, **kwargs):
+        return self.patch_embed(self.conv(self.patch_unembed(self.residual_group(x, x_size, **kwargs), x_size))) + x
 
     def flops(self):
         flops = 0
@@ -1225,7 +1229,7 @@ class SwinIR(nn.Module):
                  window_size=7, mlp_ratio=4., keep_v=False, recycle=True, qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
-                 use_checkpoint=False, upscale=2, img_range=1., upsampler='pixelshuffledirect', resi_connection='1conv',
+                 use_checkpoint=False, upscale=2, img_range=1., upsampler='pixelshuffledirect', resi_connection='1conv', use_nsml=True
                  **kwargs):
         super(SwinIR, self).__init__()
         num_in_ch = in_chans
@@ -1240,7 +1244,8 @@ class SwinIR(nn.Module):
         self.upscale = upscale
         self.upsampler = upsampler
         self.window_size = window_size
-
+        self.use_nsml = use_nsml
+        
         #####################################################################################################
         ################################### 1, shallow feature extraction ###################################
         self.conv_first = nn.Conv2d(num_in_ch, embed_dim, 3, 1, 1)
@@ -1304,7 +1309,8 @@ class SwinIR(nn.Module):
                          use_checkpoint=use_checkpoint,
                          img_size=img_size,
                          patch_size=patch_size,
-                         resi_connection=resi_connection
+                         resi_connection=resi_connection,
+                         use_nsml=use_nsml
                          )
             elif blocks[i_layer] == 'RTB':
                 layer = RSTB(dim=embed_dim,
@@ -1322,7 +1328,8 @@ class SwinIR(nn.Module):
                          use_checkpoint=use_checkpoint,
                          img_size=img_size,
                          patch_size=patch_size,
-                         resi_connection=resi_connection
+                         resi_connection=resi_connection,
+                         use_nsml=use_nsml
                          )
             else:
                 raise NotImplementedError()
@@ -1393,7 +1400,7 @@ class SwinIR(nn.Module):
         x = F.pad(x, (0, mod_pad_w, 0, mod_pad_h), 'reflect')
         return x
 
-    def forward_features(self, x, print_time=False):
+    def forward_features(self, x, **kwargs):
         x_size = (x.shape[2], x.shape[3])
         x = self.patch_embed(x)
         if self.ape:
@@ -1401,13 +1408,13 @@ class SwinIR(nn.Module):
         x = self.pos_drop(x)
 
         for layer in self.layers:
-            x = layer(x, x_size, print_time)
+            x = layer(x, x_size, **kwargs)
 
         x = self.norm(x)  # B L C
         x = self.patch_unembed(x, x_size)
         return x
 
-    def forward(self, x, print_time=False):
+    def forward(self, x, **kwargs):
         H, W = x.shape[2:]
         x = self.check_image_size(x)
 
@@ -1417,18 +1424,18 @@ class SwinIR(nn.Module):
         if self.upsampler == 'pixelshuffle':
             # for classical SR
             x = self.conv_first(x)
-            x = self.conv_after_body(self.forward_features(x, print_time)) + x
+            x = self.conv_after_body(self.forward_features(x, **kwargs)) + x
             x = self.conv_before_upsample(x)
             x = self.conv_last(self.upsample(x))
         elif self.upsampler == 'pixelshuffledirect':
             # for lightweight SR
             x = self.conv_first(x)
-            x = self.conv_after_body(self.forward_features(x, print_time)) + x
+            x = self.conv_after_body(self.forward_features(x, **kwargs)) + x
             x = self.upsample(x)
         elif self.upsampler == 'nearest+conv':
             # for real-world SR
             x = self.conv_first(x)
-            x = self.conv_after_body(self.forward_features(x, print_time)) + x
+            x = self.conv_after_body(self.forward_features(x, **kwargs)) + x
             x = self.conv_before_upsample(x)
             x = self.lrelu(self.conv_up1(torch.nn.functional.interpolate(x, scale_factor=2, mode='nearest')))
             x = self.lrelu(self.conv_up2(torch.nn.functional.interpolate(x, scale_factor=2, mode='nearest')))
@@ -1436,7 +1443,7 @@ class SwinIR(nn.Module):
         else:
             # for image denoising and JPEG compression artifact reduction
             x_first = self.conv_first(x)
-            res = self.conv_after_body(self.forward_features(x_first, print_time)) + x_first
+            res = self.conv_after_body(self.forward_features(x_first, **kwargs)) + x_first
             x = x + self.conv_last(res)
 
         x = x / self.img_range + self.mean
