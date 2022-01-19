@@ -316,7 +316,7 @@ class WindowAttention(nn.Module):
         # trunc_normal_(self.relative_position_bias_table, std=.02)
         self.softmax = nn.Softmax(dim=-1)
 
-    def forward(self, x, mask=None, labels=None, attn_labels=None, x_windows=None):
+    def forward(self, x, mask=None, attn_labels=None, x_windows=None):
         """
         Args:
             x: input features with shape of (num_windows*B, N, C)
@@ -339,17 +339,6 @@ class WindowAttention(nn.Module):
 
             attn = attn_.gather(dim=2, index=attn_labels.view(B__, 1, -1).repeat(1,self.num_heads,1))
             attn = attn.view(B_, self.num_heads, N_, N_)
-
-            '''
-            print(labels.shape)
-            print(attn_.shape)
-            print(attn.shape)
-
-            print(attn[0,0,0,0]-attn_[0,0,N*labels[0,0]+labels[0,0]])
-            print(attn[0,0,0,1]-attn_[0,0,N*labels[0,0]+labels[0,1]])
-            print(attn[0,0,1,0]-attn_[0,0,N*labels[0,1]+labels[0,0]])
-            print(attn[0,0,1,1]-attn_[0,0,N*labels[0,1]+labels[0,1]])
-            '''
 
             # relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
             #     self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
@@ -480,7 +469,7 @@ class ClusteredTransformerBlock(nn.Module):
             shortcut = x
 
         # W-MSA/SW-MSA (to be compatible for testing on images whose shapes are the multiple of window size
-        x = self.attn(x, mask=None, labels=labels, attn_labels=attn_labels, x_windows=x_windows)  # nW*B, L, C
+        x = self.attn(x, mask=None, attn_labels=attn_labels, x_windows=x_windows)  # nW*B, L, C
 
         # FFN
         x = shortcut + self.drop_path(x)

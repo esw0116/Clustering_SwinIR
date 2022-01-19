@@ -10,6 +10,9 @@ import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 
+import imageio
+import pandas as pd
+
 
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
@@ -111,12 +114,15 @@ class WindowAttention(nn.Module):
         # trunc_normal_(self.relative_position_bias_table, std=.02)
         self.softmax = nn.Softmax(dim=-1)
 
-    def forward(self, x, mask=None):
+    def forward(self, x, mask=None, **kwargs):
         """
         Args:
             x: input features with shape of (num_windows*B, N, C)
             mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
         """
+        
+        print_attn = kwargs['print_attn'] if 'print_attn' in kwargs.keys() else False
+        
         B_, N, C = x.shape
         qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
@@ -127,23 +133,27 @@ class WindowAttention(nn.Module):
         # relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
         #     self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
         # relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
-        # attn = relative_position_bias.unsqueeze(0).expand(B_, -1, -1, -1)
+        # attn = attn + relative_position_bias.unsqueeze(0)
 
         if mask is not None:
             nW = mask.shape[0]
-            # print('B: ',attn.shape)
             attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
-            # print('C: ',attn.shape)
             attn = attn.view(-1, self.num_heads, N, N)
             attn = self.softmax(attn)
         else:
             attn = self.softmax(attn)
 
+        if print_attn is True:
+            attn_map = attn.clone()
+        
         attn = self.attn_drop(attn)
 
         x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
+        
+        if print_attn:
+            return x, attn_map
         return x
 
     def extra_repr(self) -> str:
@@ -238,11 +248,12 @@ class SwinTransformerBlock(nn.Module):
 
         return attn_mask
 
-    def forward(self, x, x_size):
+    def forward(self, x, x_size, **kwargs):
         H, W = x_size
         B, L, C = x.shape
         # assert L == H * W, "input feature has wrong size"
-
+        print_attn = kwargs['print_attn'] if 'print_attn' in kwargs.keys() else False
+        
         shortcut = x
         x = self.norm1(x)
         x = x.view(B, H, W, C)
@@ -259,9 +270,22 @@ class SwinTransformerBlock(nn.Module):
 
         # W-MSA/SW-MSA (to be compatible for testing on images whose shapes are the multiple of window size
         if self.input_resolution == x_size:
-            attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
+            if print_attn is True:
+                attn_windows, attn_map = self.attn(x_windows, mask=self.attn_mask, **kwargs)  # nW*B, window_size*window_size, C
+            else:
+                attn_windows = self.attn(x_windows, mask=self.attn_mask, **kwargs)  # nW*B, window_size*window_size, C
+                
         else:
-            attn_windows = self.attn(x_windows, mask=self.calculate_mask(x_size).to(x.device))
+            if print_attn is True:
+                attn_windows, attn_map = self.attn(x_windows, mask=self.calculate_mask(x_size).to(x.device), **kwargs)
+                attn_map = attn_map.permute(0,2,3,1).squeeze(0).cpu().numpy()
+                for k in range(attn_map.shape[-1]):
+                    x_df = pd.DataFrame(attn_map[:,:,k])
+                    x_df.to_csv('results/attnmap/attnmap_head{}.csv'.format(k))
+                    imageio.imwrite('results/attnmap/attnmap_head{}.png'.format(k), attn_map[:,:,k])
+                input()
+            else:
+                attn_windows = self.attn(x_windows, mask=self.calculate_mask(x_size).to(x.device), **kwargs)
 
         # merge windows
         attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
@@ -396,12 +420,12 @@ class BasicLayer(nn.Module):
         else:
             self.downsample = None
 
-    def forward(self, x, x_size):
+    def forward(self, x, x_size, **kwargs):
         for i, blk in enumerate(self.blocks):
             if self.use_checkpoint:
-                x = checkpoint.checkpoint(blk, x, x_size)
+                x = checkpoint.checkpoint(blk, x, x_size, **kwargs)
             else:
-                x = blk(x, x_size)
+                x = blk(x, x_size, **kwargs)
                 # print(i, x.size(), self.input_resolution)
         if self.downsample is not None:
             x = self.downsample(x)
@@ -481,8 +505,8 @@ class RSTB(nn.Module):
             img_size=img_size, patch_size=patch_size, in_chans=0, embed_dim=dim,
             norm_layer=None)
 
-    def forward(self, x, x_size):
-        return self.patch_embed(self.conv(self.patch_unembed(self.residual_group(x, x_size), x_size))) + x
+    def forward(self, x, x_size, **kwargs):
+        return self.patch_embed(self.conv(self.patch_unembed(self.residual_group(x, x_size, **kwargs), x_size))) + x
 
     def flops(self):
         flops = 0
@@ -790,7 +814,7 @@ class SwinIR(nn.Module):
         x = F.pad(x, (0, mod_pad_w, 0, mod_pad_h), 'reflect')
         return x
 
-    def forward_features(self, x):
+    def forward_features(self, x, **kwargs):
         x_size = (x.shape[2], x.shape[3])
         x = self.patch_embed(x)
         if self.ape:
@@ -798,14 +822,14 @@ class SwinIR(nn.Module):
         x = self.pos_drop(x)
 
         for layer in self.layers:
-            x = layer(x, x_size)
+            x = layer(x, x_size, **kwargs)
 
         x = self.norm(x)  # B L C
         x = self.patch_unembed(x, x_size)
 
         return x
 
-    def forward(self, x):
+    def forward(self, x, **kwargs):
         H, W = x.shape[2:]
         x = self.check_image_size(x)
 
@@ -815,18 +839,18 @@ class SwinIR(nn.Module):
         if self.upsampler == 'pixelshuffle':
             # for classical SR
             x = self.conv_first(x)
-            x = self.conv_after_body(self.forward_features(x)) + x
+            x = self.conv_after_body(self.forward_features(x, **kwargs)) + x
             x = self.conv_before_upsample(x)
             x = self.conv_last(self.upsample(x))
         elif self.upsampler == 'pixelshuffledirect':
             # for lightweight SR
             x = self.conv_first(x)
-            x = self.conv_after_body(self.forward_features(x)) + x
+            x = self.conv_after_body(self.forward_features(x, **kwargs)) + x
             x = self.upsample(x)
         elif self.upsampler == 'nearest+conv':
             # for real-world SR
             x = self.conv_first(x)
-            x = self.conv_after_body(self.forward_features(x)) + x
+            x = self.conv_after_body(self.forward_features(x, **kwargs)) + x
             x = self.conv_before_upsample(x)
             x = self.lrelu(self.conv_up1(torch.nn.functional.interpolate(x, scale_factor=2, mode='nearest')))
             x = self.lrelu(self.conv_up2(torch.nn.functional.interpolate(x, scale_factor=2, mode='nearest')))
@@ -834,7 +858,7 @@ class SwinIR(nn.Module):
         else:
             # for image denoising and JPEG compression artifact reduction
             x_first = self.conv_first(x)
-            res = self.conv_after_body(self.forward_features(x_first)) + x_first
+            res = self.conv_after_body(self.forward_features(x_first, **kwargs)) + x_first
             x = x + self.conv_last(res)
 
         x = x / self.img_range + self.mean
