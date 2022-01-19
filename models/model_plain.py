@@ -15,16 +15,16 @@ from utils.utils_regularizers import regularizer_orth, regularizer_clip
 
 class ModelPlain(ModelBase):
     """Train with pixel loss"""
-    def __init__(self, opt):
+    def __init__(self, opt, use_nsml):
         super(ModelPlain, self).__init__(opt)
         # ------------------------------------
         # define network
         # ------------------------------------
         self.opt_train = self.opt['train']    # training option
-        self.netG = define_G(opt)
+        self.netG = define_G(opt, use_nsml)
         self.netG = self.model_to_device(self.netG)
         if self.opt_train['E_decay'] > 0:
-            self.netE = define_G(opt).to(self.device).eval()
+            self.netE = define_G(opt, use_nsml).to(self.device).eval()
 
     """
     # ----------------------------------------

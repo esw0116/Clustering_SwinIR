@@ -10,7 +10,7 @@
 # python main_test_clustertransformer.py --benchmark Urban100 --task kmeans_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_264/95000/model/G.pth
 # python main_test_clustertransformer.py --benchmark Set5 --task kmeans_post_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_263/250000/model/G.pth
 # python main_test_clustertransformer.py --benchmark Urban100 --task kmeans_last_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_273/250000/model/G.pth
-python main_test_clustertransformer.py --benchmark Set5 --task kmeans_postkeepv_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_288/390000/model/G.pth
-python main_test_clustertransformer.py --benchmark Set5 --task kmeans_postkeepvnorecycle_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_290/290000/model/G.pth
-python main_test_clustertransformer.py --benchmark Urban100 --task kmeans_postkeepv_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_288/390000/model/G.pth
-python main_test_clustertransformer.py --benchmark Urban100 --task kmeans_postkeepvnorecycle_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_290/290000/model/G.pth
+# python main_test_clustertransformer.py --benchmark Set5 --task kmeans_postkeepv_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_288/390000/model/G.pth
+python main_test_clustertransformer.py --benchmark Set5 --task kmeans_postkeepvnorecycle_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_290/430000/model/G.pth
+# python main_test_clustertransformer.py --benchmark Urban100 --task kmeans_postkeepv_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_288/390000/model/G.pth
+python main_test_clustertransformer.py --benchmark Urban100 --task kmeans_postkeepvnorecycle_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_290/430000/model/G.pth

@@ -75,6 +75,7 @@ def main():
             w_pad = (w_old // window_size + 1) * window_size - w_old
             img_lq = torch.cat([img_lq, torch.flip(img_lq, [2])], 2)[:, :, :h_old + h_pad, :]
             img_lq = torch.cat([img_lq, torch.flip(img_lq, [3])], 3)[:, :, :, :w_old + w_pad]
+            # output = test(img_lq, model, args, window_size, imgname=f'{save_dir}/{imgname}')
             output = test(img_lq, model, args, window_size)
             output = output[..., :h_old * args.scale, :w_old * args.scale]
         end.record()
@@ -209,15 +210,9 @@ def setup(args):
     hr = os.path.basename(os.path.dirname(args.folder_gt))
     save_dir = f'results/{hr}/{args.task}_X{args.scale}'
     folder = args.folder_gt
-    border = args.scale
+    # border = args.scale
+    border = 0
     window_size = 8
-
-    # elif args.task == 'noswin_sr':
-    #     hr = os.path.basename(os.path.dirname(args.folder_gt))
-    #     save_dir = f'results/{hr}/{args.task}_X{args.scale}'
-    #     folder = args.folder_gt
-    #     border = args.scale
-    #     window_size = 8
 
     return folder, save_dir, border, window_size
 
@@ -234,10 +229,13 @@ def get_image_pair(args, path):
     return imgname, img_lq, img_gt
 
 
-def test(img_lq, model, args, window_size):
+def test(img_lq, model, args, window_size, imgname=None):
     if args.tile is None:
         # test the image as a whole
-        output = model(img_lq)
+        if imgname is None:
+            output = model(img_lq)
+        else:
+            output = model(img_lq, imgsave_name=imgname)
     else:
         # test the image tile by tile
         b, c, h, w = img_lq.size()
