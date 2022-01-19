@@ -71,30 +71,53 @@ class Clustering():
             self,
             points: torch.Tensor,
             init_type: str='random',
-            enable_gradient: bool=False) -> typing.Tuple[torch.Tensor, torch.Tensor]:
+            enable_gradient: bool=False,
+            random_label: bool=False) -> typing.Tuple[torch.Tensor, torch.Tensor]:
 
         '''
         We assume that the input points are batched, e.g., (B, N, C)
         
         '''
 
-        best = 1e8
-        for _ in range(self.n_init):
-            centroids, labels, cost = self.cluster(points)
+        if random_label:
+            # (B, N, C)
+            b, n, n_feats = points.size()
+            labels_ = torch.arange(self.k).repeat(n // self.k)
 
-            if cost < best:
-                self.cluster_centers_ = centroids.clone()
-                self.labels_ = labels.clone()
-                best = cost
+            labels_ = labels_.unsqueeze(dim=0)
+            while len(labels_[0]) < n:
+                labels_ = torch.cat( [labels_, torch.randint(self.k, (1,1))], dim=1)
+            
+            labels = labels_[:,torch.randperm(labels_.size()[1])]
+            for _ in range(b-1):
+                labels_ = labels_[:,torch.randperm(labels_.size()[1])]
+                labels = torch.cat([labels, labels_], dim=0)
 
-        # print('Best round: {}'.format(best_idx))
-        if enable_gradient:
-            points_flat = points.view(points.size(0) * points.size(1), -1)
-            self.cluster_centers_ = self.construct_centroid(
-                points_flat, self.labels_,
-            )
+            cluster_centers = torch.zeros((b, self.k, n_feats)).type_as(points)
+            for i in range(b):
+                for j in range(self.k):
+                    cluster_centers[i,j] = torch.mean(points[i, labels[i]==j], dim=0)
 
-        return self.cluster_centers_, self.labels_
+            return cluster_centers.cuda(), labels.cuda()
+            
+        else:
+            best = 1e8
+            for _ in range(self.n_init):
+                centroids, labels, cost = self.cluster(points)
+
+                if cost < best:
+                    self.cluster_centers_ = centroids.clone()
+                    self.labels_ = labels.clone()
+                    best = cost
+
+            # print('Best round: {}'.format(best_idx))
+            if enable_gradient:
+                points_flat = points.view(points.size(0) * points.size(1), -1)
+                self.cluster_centers_ = self.construct_centroid(
+                    points_flat, self.labels_,
+                )
+
+            return self.cluster_centers_, self.labels_
 
     def construct_centroid(
             self,
@@ -721,7 +744,7 @@ class BasicLayer(nn.Module):
         use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False.
     """
 
-    def __init__(self, dim, input_resolution, depth, num_heads, window_size, keep_v=False, recycle=True, num_groups=16,
+    def __init__(self, dim, input_resolution, depth, num_heads, window_size, keep_v=False, recycle=True, random_label=False, num_groups=16,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False):
 
@@ -734,6 +757,7 @@ class BasicLayer(nn.Module):
         self.clustering = Clustering(num_groups, n_init=1)
         self.keep_v = keep_v
         self.recycle = recycle
+        self.random_label = random_label
         self.num_groups = num_groups
 
         # build blocks
@@ -824,11 +848,9 @@ class BasicLayer(nn.Module):
         for j, blk in enumerate(self.post_blocks):
             timer_list = self.measure_time(msg=f'clustering_{j}', timer_list=timer_list)
             if j == 0:
-                #my_cluster.record()
-                #torch.cuda.synchronize()
-                x_centers, labels = self.clustering.fit(x_windows, enable_gradient=True)
+                x_centers, labels = self.clustering.fit(x_windows, enable_gradient=True, random_label=self.random_label)
             elif not self.recycle:
-                x_centers, labels = self.clustering.fit(x_windows, enable_gradient=True)
+                x_centers, labels = self.clustering.fit(x_windows, enable_gradient=True, random_label=self.random_label)
             
             timer_list = self.measure_time(msg=f'tiling_{j}', timer_list=timer_list)
 
@@ -926,7 +948,7 @@ class RSTB(nn.Module):
         resi_connection: The convolutional block before residual connection.
     """
 
-    def __init__(self, dim, input_resolution, depth, num_heads, window_size, keep_v=False, recycle=True, num_groups=16,
+    def __init__(self, dim, input_resolution, depth, num_heads, window_size, keep_v=False, recycle=True, random_label=False, num_groups=16,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False,
                  img_size=224, patch_size=4, resi_connection='1conv'):
@@ -942,6 +964,7 @@ class RSTB(nn.Module):
                                          window_size=window_size,
                                          keep_v=keep_v,
                                          recycle=recycle,
+                                         random_label=random_label,
                                          num_groups=num_groups,
                                          mlp_ratio=mlp_ratio,
                                          qkv_bias=qkv_bias, qk_scale=qk_scale,
@@ -1138,7 +1161,7 @@ class SwinIR(nn.Module):
     """
 
     def __init__(self, img_size=64, patch_size=1, in_chans=3,
-                 embed_dim=96, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6], keep_v=False, recycle=True, num_groups=16, # False
+                 embed_dim=96, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6], keep_v=False, recycle=True, random_label=False, num_groups=16,
                  window_size=7, mlp_ratio=4., qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
@@ -1205,6 +1228,7 @@ class SwinIR(nn.Module):
                          window_size=window_size,
                          keep_v=keep_v,
                          recycle=recycle,
+                         random_label=random_label,
                          num_groups=num_groups,
                          mlp_ratio=self.mlp_ratio,
                          qkv_bias=qkv_bias, qk_scale=qk_scale,
