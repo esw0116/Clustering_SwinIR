@@ -78,7 +78,7 @@ class Clustering():
         '''
 
         b, n, n_feats = points.size()
-        labels_ = torch.arange(self.k).repeat(n // self.k)
+        labels_ = torch.arange(self.k).repeat(n // self.k).cuda()
 
         labels_ = labels_.unsqueeze(dim=0)
         while len(labels_[0]) < n:
@@ -89,12 +89,18 @@ class Clustering():
             labels_ = labels_[:,torch.randperm(labels_.size()[1])]
             labels = torch.cat([labels, labels_], dim=0)
 
-        cluster_centers = torch.zeros((b, self.k, n_feats)).type_as(points)
-        for i in range(b):
-            for j in range(self.k):
-                cluster_centers[i,j] = torch.mean(points[i, labels[i]==j], dim=0)
+        # cluster_centers = torch.zeros((b, self.k, n_feats)).type_as(points)
+        # for i in range(b):
+        #     for j in range(self.k):
+        #         cluster_centers[i,j] = torch.mean(points[i, labels[i]==j], dim=0)
 
-        return cluster_centers.cuda(), labels.cuda()
+        # return cluster_centers.cuda(), labels.cuda()
+
+        # print(points.shape, labels.shape)
+        points_flat = points.view(points.size(0) * points.size(1), -1)
+        cluster_centers_ = self.construct_centroid(points_flat, labels)
+        # print(cluster_centers_.shape, labels.shape)
+        return cluster_centers_, labels
 
     def construct_centroid(
             self,
@@ -1219,7 +1225,7 @@ class SwinIR(nn.Module):
                  window_size=7, mlp_ratio=4., keep_v=False, recycle=True, qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
-                 use_checkpoint=False, upscale=2, img_range=1., upsampler='pixelshuffledirect', resi_connection='1conv', use_nsml=True
+                 use_checkpoint=False, upscale=2, img_range=1., upsampler='pixelshuffledirect', resi_connection='1conv', use_nsml=True,
                  **kwargs):
         super(SwinIR, self).__init__()
         num_in_ch = in_chans
