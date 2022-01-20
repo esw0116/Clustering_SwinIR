@@ -154,7 +154,7 @@ def main(json_path='options/train_msrresnet_psnr.json', use_nsml=True):
     # ----------------------------------------
     '''
 
-    model = define_Model(opt)
+    model = define_Model(opt, use_nsml)
     model.init_train()
     if opt['rank'] == 0:
         logger.info(model.info_network())

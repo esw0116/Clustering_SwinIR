@@ -310,8 +310,7 @@ class PatchMerging(nn.Module):
         super().__init__()
         self.input_resolution = input_resolution
         self.dim = dim
-        # self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
-        # self.norm = norm_layer(4 * dim)
+        self.norm = norm_layer(dim)
 
     def forward(self, x, x_size):
         """
@@ -323,17 +322,14 @@ class PatchMerging(nn.Module):
         assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
 
         x = x.view(B, H, W, C)
+        x_avg = torch.zeros(B, H//4, W//4, C).type_as(x)
+        for i in range(4):
+            for j in range(4):
+                x_avg += x[:, i::4, j::4, :]
+        x_avg /= 16
 
-        x0 = x[:, 0::2, 0::2, :]  # B H/2 W/2 C
-        x1 = x[:, 1::2, 0::2, :]  # B H/2 W/2 C
-        x2 = x[:, 0::2, 1::2, :]  # B H/2 W/2 C
-        x3 = x[:, 1::2, 1::2, :]  # B H/2 W/2 C
-        x = torch.cat([x0, x1, x2, x3], -1)  # B H/2 W/2 4*C
-        x = x.view(B, -1, 4 * C)  # B H/2*W/2 4*C
-
-        # x = self.norm(x)
-        # x = self.reduction(x)
-
+        x = x_avg.view(B, -1, C)  # B H/2*W/2 4*C
+        x = self.norm(x)
         return x
 
     def extra_repr(self) -> str:
@@ -342,7 +338,6 @@ class PatchMerging(nn.Module):
     def flops(self):
         H, W = self.input_resolution
         flops = H * W * self.dim
-        flops += (H // 2) * (W // 2) * 4 * self.dim * 2 * self.dim
         return flops
 
 class PatchUnmerging(nn.Module):
@@ -357,7 +352,7 @@ class PatchUnmerging(nn.Module):
         super().__init__()
         self.input_resolution = input_resolution
         self.dim = dim
-        # self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
+        self.inflation = nn.Linear(2*dim, 4*dim, bias=False)
         self.norm = norm_layer(dim)
 
     def forward(self, x, x_size):
@@ -365,25 +360,19 @@ class PatchUnmerging(nn.Module):
         x: B, H*W, C
         """
         H, W = x_size
-        H = H // 2
-        W = W // 2
+        H = H // 4
+        W = W // 4
         B, L, C = x.shape
         assert L == H * W, "input feature has wrong size"
         assert H % 2 == 0 and W % 2 == 0, f"x size ({H}*{W}) are not even."
 
         x = x.view(B, H, W, C)
-        c = C // 4
-        X = torch.zeros(B, 2*H, 2*W, c).type_as(x)
-        X[:, 0::2, 0::2, :] = x[..., :c]  # B H/2 W/2 C
-        X[:, 1::2, 0::2, :] = x[..., c:2*c]  # B H/2 W/2 C
-        X[:, 0::2, 1::2, :] = x[..., 2*c:3*c]  # B H/2 W/2 C
-        X[:, 1::2, 1::2, :] = x[..., 3*c:]  # B H/2 W/2 C
-        X = X.view(B, -1, c)  # B H/2*W/2 4*C
+        x = x.repeat_interleave(4, dim=1)
+        x = x.repeat_interleave(4, dim=2)
+        assert x.shape[1] == 4*H and x.shape[2] == 4*W
 
-        X = self.norm(X)
-        # x = self.reduction(x)
-
-        return X
+        x = self.norm(x)
+        return x
 
     def extra_repr(self) -> str:
         return f"input_resolution={self.input_resolution}, dim={self.dim}"
@@ -431,7 +420,7 @@ class BasicLayer(nn.Module):
         self.blocks1 = nn.ModuleList([
             SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
                                  num_heads=num_heads, window_size=window_size,
-                                 shift_size=0 if (i % 2 == 0) else window_size // 2,
+                                 shift_size=0,
                                  mlp_ratio=mlp_ratio,
                                  qkv_bias=qkv_bias, qk_scale=qk_scale,
                                  drop=drop, attn_drop=attn_drop,
@@ -440,12 +429,12 @@ class BasicLayer(nn.Module):
             for i in range(depth1)])
 
         h, w = input_resolution
-        new_input_resolution = (h//2, w//2)
+        new_input_resolution = (h//4, w//4)
         self.new_input_resolution = new_input_resolution
         self.blocks2 = nn.ModuleList([
-            SwinTransformerBlock(dim=4*dim, input_resolution=new_input_resolution,
+            SwinTransformerBlock(dim=dim, input_resolution=new_input_resolution,
                                  num_heads=num_heads, window_size=window_size,
-                                 shift_size=0 if (i % 2 == 0) else window_size // 2,
+                                 shift_size=0,
                                  mlp_ratio=mlp_ratio,
                                  qkv_bias=qkv_bias, qk_scale=qk_scale,
                                  drop=drop, attn_drop=attn_drop,
@@ -472,7 +461,7 @@ class BasicLayer(nn.Module):
         x = self.patchmerge(x, x_size)
         # print('Merge', x.size())
         h, w = x_size
-        h, w = h//2, w//2
+        h, w = h//4, w//4
         for blk in self.blocks2:
             if self.use_checkpoint:
                 x = checkpoint.checkpoint(blk, x, (h, w))
@@ -482,7 +471,6 @@ class BasicLayer(nn.Module):
         # print('Unmerge', x.size())
         if self.downsample is not None:
             x = self.downsample(x)
-        print(x.shape)
         return x
 
     def extra_repr(self) -> str:

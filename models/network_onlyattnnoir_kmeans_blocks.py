@@ -14,7 +14,6 @@ import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 
 import imageio
-from srwarp import svf
 
 
 class PWD(nn.Module):
@@ -793,6 +792,9 @@ class BasicClusterLayer(nn.Module):
         self.color_r = {0: 0 , 1: 157, 2: 255, 3: 190, 4: 224, 5: 73, 6: 164, 7: 255, 8: 247, 9: 47, 10:  68, 11: 163, 12: 27, 13:   0, 14:  49, 15: 178}
         self.color_g = {0: 0 , 1: 157, 2: 255, 3:  38, 4: 111, 5: 60, 6: 100, 7: 137, 8: 226, 9: 72, 10: 137, 11: 206, 12: 38, 13:  87, 14: 162, 15: 220}
         self.color_b = {0: 0 , 1: 157, 2: 255, 3:  51, 4: 139, 5: 43, 6:  34, 7:  49, 8: 107, 9: 78, 10:  26, 11:  39, 12: 50, 13: 132, 14: 262, 15: 239}
+
+        if not self.use_nsml:
+            from srwarp import svf
 
         # build blocks
         self.blocks = nn.ModuleList([
