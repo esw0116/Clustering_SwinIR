@@ -278,12 +278,12 @@ class SwinTransformerBlock(nn.Module):
         else:
             if print_attn is True:
                 attn_windows, attn_map = self.attn(x_windows, mask=self.calculate_mask(x_size).to(x.device), **kwargs)
-                attn_map = attn_map.permute(0,2,3,1).squeeze(0).cpu().numpy()
-                for k in range(attn_map.shape[-1]):
-                    x_df = pd.DataFrame(attn_map[:,:,k])
-                    x_df.to_csv('results/attnmap/attnmap_head{}.csv'.format(k))
-                    imageio.imwrite('results/attnmap/attnmap_head{}.png'.format(k), attn_map[:,:,k])
-                input()
+                attn_map = attn_map.permute(0,2,3,1).cpu().numpy()
+                # for k in range(attn_map.shape[-1]):
+                #     x_df = pd.DataFrame(attn_map[:,:,k])
+                #     x_df.to_csv('results/attnmap/attnmap_head{}.csv'.format(k))
+                #     imageio.imwrite('results/attnmap/attnmap_head{}.png'.format(k), attn_map[:,:,k])
+                # input()
             else:
                 attn_windows = self.attn(x_windows, mask=self.calculate_mask(x_size).to(x.device), **kwargs)
 
@@ -302,6 +302,8 @@ class SwinTransformerBlock(nn.Module):
         x = shortcut + self.drop_path(x)
         x = x + self.drop_path(self.mlp(self.norm2(x)))
 
+        if print_attn is True:
+            return x, attn_map
         return x
 
     def extra_repr(self) -> str:
@@ -421,14 +423,24 @@ class BasicLayer(nn.Module):
             self.downsample = None
 
     def forward(self, x, x_size, **kwargs):
+        print_attn = kwargs['print_attn'] if 'print_attn' in kwargs.keys() else False
+        
+        if print_attn is True:
+            attnmap_list = []
+        
         for i, blk in enumerate(self.blocks):
             if self.use_checkpoint:
                 x = checkpoint.checkpoint(blk, x, x_size, **kwargs)
             else:
-                x = blk(x, x_size, **kwargs)
-                # print(i, x.size(), self.input_resolution)
+                if print_attn is True:
+                    x, attnmap = blk(x, x_size, **kwargs)
+                    attnmap_list.append(attnmap)
+                else:
+                    x = blk(x, x_size, **kwargs)
         if self.downsample is not None:
             x = self.downsample(x)
+        if print_attn is True:
+            return x, attnmap_list
         return x
 
     def extra_repr(self) -> str:
@@ -506,6 +518,10 @@ class RSTB(nn.Module):
             norm_layer=None)
 
     def forward(self, x, x_size, **kwargs):
+        print_attn = kwargs['print_attn'] if 'print_attn' in kwargs.keys() else False
+        if print_attn is True:
+            out, attnmap = self.residual_group(x, x_size, **kwargs)
+            return self.patch_embed(self.conv(self.patch_unembed(out, x_size))) + x, attnmap
         return self.patch_embed(self.conv(self.patch_unembed(self.residual_group(x, x_size, **kwargs), x_size))) + x
 
     def flops(self):
@@ -815,6 +831,11 @@ class SwinIR(nn.Module):
         return x
 
     def forward_features(self, x, **kwargs):
+        print_attn = kwargs['print_attn'] if 'print_attn' in kwargs.keys() else False
+        
+        if print_attn is True:
+            attnmap_list = []
+        
         x_size = (x.shape[2], x.shape[3])
         x = self.patch_embed(x)
         if self.ape:
@@ -822,14 +843,19 @@ class SwinIR(nn.Module):
         x = self.pos_drop(x)
 
         for layer in self.layers:
-            x = layer(x, x_size, **kwargs)
+            x, attnmap = layer(x, x_size, **kwargs)
+            attnmap_list.append(attnmap)
 
         x = self.norm(x)  # B L C
         x = self.patch_unembed(x, x_size)
 
+        if print_attn is True:
+            return x, attnmap_list
         return x
 
     def forward(self, x, **kwargs):
+        print_attn = kwargs['print_attn'] if 'print_attn' in kwargs.keys() else False
+
         H, W = x.shape[2:]
         x = self.check_image_size(x)
 
@@ -845,7 +871,11 @@ class SwinIR(nn.Module):
         elif self.upsampler == 'pixelshuffledirect':
             # for lightweight SR
             x = self.conv_first(x)
-            x = self.conv_after_body(self.forward_features(x, **kwargs)) + x
+            if print_attn is True:
+                out, attnmap_list = self.forward_features(x, **kwargs)
+                x = self.conv_after_body(out) + x
+            else:
+                x = self.conv_after_body(self.forward_features(x, **kwargs)) + x
             x = self.upsample(x)
         elif self.upsampler == 'nearest+conv':
             # for real-world SR
@@ -863,6 +893,8 @@ class SwinIR(nn.Module):
 
         x = x / self.img_range + self.mean
 
+        if print_attn is True:
+            return x[:, :, :H*self.upscale, :W*self.upscale], attnmap_list
         return x[:, :, :H*self.upscale, :W*self.upscale]
 
     def flops(self):
