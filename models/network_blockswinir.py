@@ -482,7 +482,6 @@ class BasicLayer(nn.Module):
         # print('Unmerge', x.size())
         if self.downsample is not None:
             x = self.downsample(x)
-        print(x.shape)
         return x
 
     def extra_repr(self) -> str:

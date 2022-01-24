@@ -76,24 +76,31 @@ class Clustering():
         
         '''
 
-        best = 1e8
-        for _ in range(self.n_init):
-            centroids, labels, cost = self.cluster(points)
+        b, n, n_feats = points.size()
+        labels_ = torch.arange(self.k).repeat(n // self.k).cuda()
 
-            if cost < best:
-                self.cluster_centers_ = centroids.clone()
-                self.labels_ = labels.clone()
-                best = cost
+        labels_ = labels_.unsqueeze(dim=0)
+        while len(labels_[0]) < n:
+            labels_ = torch.cat( [labels_, torch.randint(self.k, (1,1))], dim=1)
+        
+        labels = labels_[:,torch.randperm(labels_.size()[1])]
+        for _ in range(b-1):
+            labels_ = labels_[:,torch.randperm(labels_.size()[1])]
+            labels = torch.cat([labels, labels_], dim=0)
 
-        # print('Best round: {}'.format(best_idx))
-        if enable_gradient:
-            points_flat = points.view(points.size(0) * points.size(1), -1)
-            self.cluster_centers_ = self.construct_centroid(
-                points_flat, self.labels_,
-            )
+        # cluster_centers = torch.zeros((b, self.k, n_feats)).type_as(points)
+        # for i in range(b):
+        #     for j in range(self.k):
+        #         cluster_centers[i,j] = torch.mean(points[i, labels[i]==j], dim=0)
 
-        return self.cluster_centers_, self.labels_
+        # return cluster_centers.cuda(), labels.cuda()
 
+        # print(points.shape, labels.shape)
+        points_flat = points.view(points.size(0) * points.size(1), -1)
+        cluster_centers_ = self.construct_centroid(points_flat, labels)
+        # print(cluster_centers_.shape, labels.shape)
+        return cluster_centers_, labels
+    
     def construct_centroid(
             self,
             points_flat: torch.Tensor,

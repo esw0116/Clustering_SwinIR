@@ -14,7 +14,6 @@ import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 
 import imageio
-from srwarp import svf
 
 
 class PWD(nn.Module):
@@ -64,6 +63,7 @@ class Clustering():
         self.k = k
         self.n_init = n_init
         self.max_iter = max_iter
+        self.label_dict = {}
         return
 
     def fit(
@@ -78,30 +78,25 @@ class Clustering():
         '''
 
         b, n, n_feats = points.size()
-        labels_ = torch.arange(self.k).repeat(n // self.k).cuda()
+        if str(b)+'_'+str(n) in self.label_dict.keys():
+            labels = self.label_dict[str(b)+'_'+str(n)]
+        else:
+            labels_ = torch.arange(self.k).repeat(n // self.k).cuda()
+            labels_ = labels_.unsqueeze(dim=0)
+            while len(labels_[0]) < n:
+                labels_ = torch.cat( [labels_, torch.randint(self.k, (1,1))], dim=1)
+            
+            labels = labels_[:,torch.randperm(labels_.size()[1])]
+            for _ in range(b-1):
+                labels_ = labels_[:,torch.randperm(labels_.size()[1])]
+                labels = torch.cat([labels, labels_], dim=0)
+            self.label_dict[str(b)+'_'+str(n)] = labels
 
-        labels_ = labels_.unsqueeze(dim=0)
-        while len(labels_[0]) < n:
-            labels_ = torch.cat( [labels_, torch.randint(self.k, (1,1))], dim=1)
-        
-        labels = labels_[:,torch.randperm(labels_.size()[1])]
-        for _ in range(b-1):
-            labels_ = labels_[:,torch.randperm(labels_.size()[1])]
-            labels = torch.cat([labels, labels_], dim=0)
-
-        # cluster_centers = torch.zeros((b, self.k, n_feats)).type_as(points)
-        # for i in range(b):
-        #     for j in range(self.k):
-        #         cluster_centers[i,j] = torch.mean(points[i, labels[i]==j], dim=0)
-
-        # return cluster_centers.cuda(), labels.cuda()
-
-        # print(points.shape, labels.shape)
         points_flat = points.view(points.size(0) * points.size(1), -1)
         cluster_centers_ = self.construct_centroid(points_flat, labels)
         # print(cluster_centers_.shape, labels.shape)
         return cluster_centers_, labels
-
+    
     def construct_centroid(
             self,
             points_flat: torch.Tensor,
@@ -801,6 +796,9 @@ class BasicClusterLayer(nn.Module):
         self.color_g = {0: 0 , 1: 157, 2: 255, 3:  38, 4: 111, 5: 60, 6: 100, 7: 137, 8: 226, 9: 72, 10: 137, 11: 206, 12: 38, 13:  87, 14: 162, 15: 220}
         self.color_b = {0: 0 , 1: 157, 2: 255, 3:  51, 4: 139, 5: 43, 6:  34, 7:  49, 8: 107, 9: 78, 10:  26, 11:  39, 12: 50, 13: 132, 14: 262, 15: 239}
 
+        if not self.use_nsml:
+            from srwarp import svf
+
         # build blocks
         self.blocks = nn.ModuleList([
             ClusteredTransformerBlock(dim=dim, input_resolution=input_resolution,
@@ -1225,8 +1223,8 @@ class SwinIR(nn.Module):
                  window_size=7, mlp_ratio=4., keep_v=False, recycle=True, qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
-                 use_checkpoint=False, upscale=2, img_range=1., upsampler='pixelshuffledirect', resi_connection='1conv', use_nsml=True,
-                 **kwargs):
+                 use_checkpoint=False, upscale=2, img_range=1., upsampler='pixelshuffledirect', resi_connection='1conv', use_nsml=True
+                 ):
         super(SwinIR, self).__init__()
         num_in_ch = in_chans
         num_out_ch = 3 #in_chans

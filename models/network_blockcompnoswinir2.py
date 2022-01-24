@@ -370,7 +370,7 @@ class PatchUnmerging(nn.Module):
         x = x.repeat_interleave(4, dim=1)
         x = x.repeat_interleave(4, dim=2)
         assert x.shape[1] == 4*H and x.shape[2] == 4*W
-
+        x = x.view(B, -1, C)
         x = self.norm(x)
         return x
 
@@ -430,10 +430,9 @@ class BasicLayer(nn.Module):
 
         h, w = input_resolution
         new_input_resolution = (h//4, w//4)
-        self.new_input_resolution = new_input_resolution
         self.blocks2 = nn.ModuleList([
             SwinTransformerBlock(dim=dim, input_resolution=new_input_resolution,
-                                 num_heads=num_heads, window_size=window_size,
+                                 num_heads=num_heads, window_size=window_size//2,
                                  shift_size=0,
                                  mlp_ratio=mlp_ratio,
                                  qkv_bias=qkv_bias, qk_scale=qk_scale,
@@ -458,6 +457,7 @@ class BasicLayer(nn.Module):
                 x = checkpoint.checkpoint(blk, x, x_size)
             else:
                 x = blk(x, x_size)
+        # print('Initial', x.size(), x_size)
         x = self.patchmerge(x, x_size)
         # print('Merge', x.size())
         h, w = x_size

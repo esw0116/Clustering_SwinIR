@@ -450,7 +450,7 @@ class ClusteredTransformerBlock(nn.Module):
 
         self.norm1 = norm_layer(dim)
         self.attn = WindowAttention(
-            dim, window_size=(num_groups, 1), num_heads=num_heads, keep_v=keep_v,
+            dim, window_size=to_2tuple(self.window_size), num_heads=num_heads, keep_v=keep_v,
             qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
 
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
@@ -458,7 +458,7 @@ class ClusteredTransformerBlock(nn.Module):
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
-    def forward(self, x, x_size, labels=None, attn_labels=None, x_windows=None):
+    def forward(self, x, x_size, mask=None, attn_labels=None, x_windows=None):
         # H, W = x_size
         # B, L, C = x.shape
 
@@ -468,7 +468,7 @@ class ClusteredTransformerBlock(nn.Module):
             shortcut = x
 
         # W-MSA/SW-MSA (to be compatible for testing on images whose shapes are the multiple of window size
-        x = self.attn(x, mask=None, attn_labels=attn_labels, x_windows=x_windows)  # nW*B, L, C
+        x = self.attn(x, mask=mask, attn_labels=attn_labels, x_windows=x_windows)  # nW*B, L, C
 
         # FFN
         x = shortcut + self.drop_path(x)
@@ -488,7 +488,7 @@ class ClusteredTransformerBlock(nn.Module):
         flops += self.dim * H * W
         # W-MSA/SW-MSA
         nW = H * W / self.window_size / self.window_size
-        flops += nW * self.attn.flops(self.num_groups, self.window_size*self.window_size)
+        flops += nW * self.attn.flops(self.window_size*self.window_size, self.window_size*self.window_size)
         # mlp
         flops += 2 * H * self.dim * self.dim * self.mlp_ratio
         # norm2
@@ -846,34 +846,21 @@ class BasicClusterLayer(nn.Module):
 
             if j == 0  or (not self.recycle):
                 x_centers, labels = self.clustering.fit(x_windows, enable_gradient=True)
-                if self.keep_v:
-                    if self.use_nsml:
-                        attn_labels = torch.zeros((b, l, l)).type_as(labels)
-                        for i in range(b):
-                            grid_x, grid_y = torch.meshgrid(labels[i]*self.num_groups, labels[i])
-                            attn_labels[i, :, :] = grid_x + grid_y
-                    else:
-                        attn_labels = svf.gather_2d(labels, self.num_groups)
+                attn_masks = torch.zeros((b, l, l)).type_as(labels)
+                for i in range(b):
+                    grid_x, grid_y = torch.meshgrid(labels[i], labels[i])
+                    attn_masks[i, :, :] = grid_x - grid_y
             
+                    attn_masks = attn_masks.masked_fill(attn_masks != 0, float(-100.0)).masked_fill(attn_masks == 0, float(0.0))
+
             if self.use_checkpoint:
                 x_centers = checkpoint.checkpoint(blk, x_centers, x_size)
             else:
-                if self.keep_v:
-                    x_windows = blk(x_centers, x_size, attn_labels=attn_labels, x_windows=x_windows)
-                else:
-                    x_centers = blk(x_centers, x_size)
+                x_windows = blk(x_windows, x_size, mask=attn_masks)
         
         timer_list = self.measure_time(msg='window_partition', timer_list=timer_list)
 
-        if self.keep_v:
-            x = window_reverse(x_windows, self.window_size*2, H, W)
-        else:
-            x = x_centers.gather(
-                dim=1,
-                index=labels.view(*labels.size(), 1).repeat(1, 1, c),
-            )
-            x = window_reverse(x, self.window_size*2, H, W)
-        
+        x = window_reverse(x_windows, self.window_size*2, H, W)        
         x = x.reshape(B,L,C)
 
         if imgsave_name is not None:
