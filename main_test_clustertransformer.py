@@ -119,7 +119,7 @@ def main():
     if img_gt is not None:
         ave_psnr = sum(test_results['psnr']) / len(test_results['psnr'])
         ave_ssim = sum(test_results['ssim']) / len(test_results['ssim'])
-        print('\n{} \n-- Average PSNR/SSIM(RGB): {:.2f} dB; {:.4f}'.format(save_dir, ave_psnr, ave_ssim))
+        print('\n{} \n-- Flops: {} \n-- Average PSNR/SSIM(RGB): {:.2f} dB; {:.4f}'.format(save_dir, model.flops(), ave_psnr, ave_ssim))
         if img_gt.ndim == 3:
             ave_psnr_y = sum(test_results['psnr_y']) / len(test_results['psnr_y'])
             ave_ssim_y = sum(test_results['ssim_y']) / len(test_results['ssim_y'])
@@ -143,25 +143,31 @@ def define_model(args):
                     mlp_ratio=2, upsampler='pixelshuffledirect', resi_connection='1conv')
         param_key_g = 'params'
 
-    elif args.task in ['onlySA_sr', 'onlySA_shallow_sr', 'onlySA_tooshallow_sr', 'onlySA_short_sr', 'onlySA_tooshort_sr', 'onlySA_thin_sr', 'onlySA_toothin_sr']:
-        from models.network_onlyattnir import SwinIR as net
-        if args.task == 'onlySA_shallow_sr':
+    elif args.task in ['onlySA_sr', 'onlySA_shallow_sr', 'onlySA_tooshallow_sr', 'onlySA_short_sr', 'onlySA_tooshort_sr', 'onlySA_thin_sr', 'onlySA_toothin_sr',
+                'onlySA_no_sr', 'onlySA_shallow_no_sr', 'onlySA_tooshallow_no_sr', 'onlySA_short_no_sr', 'onlySA_tooshort_no_sr', 'onlySA_thin_no_sr', 'onlySA_toothin_no_sr']:
+        
+        if '_no_' in args.task:
+            from models.network_onlyattnnoir import SwinIR as net
+        else:
+            from models.network_onlyattnir import SwinIR as net
+        
+        if 'onlySA_shallow' in args.task:
             dim = 48
-        elif args.task == 'onlySA_tooshallow_sr':
+        elif 'onlySA_tooshallow' in args.task:
             dim = 42
         else:
             dim=60
         
-        if args.task == 'onlySA_short_sr':
+        if 'onlySA_short' in args.task:
             depth = [6,6,6]
             head = [6,6,6]
-        elif args.task == 'onlySA_tooshort_sr':
+        elif 'onlySA_tooshort' in args.task:
             depth = [6,6]
             head = [6,6]
-        elif args.task == 'onlySA_thin_sr':
+        elif 'onlySA_thin' in args.task:
             depth = [4,4,4,4]
             head = [6,6,6,6]
-        elif args.task == 'onlySA_toothin_sr':
+        elif 'onlySA_toothin' in args.task:
             depth = [3,3,3,3]
             head = [6,6,6,6]
         else:
@@ -198,10 +204,32 @@ def define_model(args):
                  blocks=block, num_groups=16, keep_v=keepv, recycle=recycle,
                  mlp_ratio=2., upsampler='pixelshuffledirect', resi_connection='1conv')
         param_key_g = 'params'
+
+    elif args.task == 'blockcluster_noswin_sr':
+        from models.network_blockcompnoswinir2 import SwinIR as net
+        model = net(upscale=args.scale, in_chans=3, img_size=64, window_size=8,
+                    img_range=1., depths=[6, 6, 6, 6], embed_dim=60, num_heads=[6, 6, 6, 6],
+                    mlp_ratio=2, upsampler='pixelshuffledirect', resi_connection='1conv')
+        param_key_g = 'params'
     
+    elif args.task == 'random_noswin_sr':
+        from models.network_onlyattnnoir_random_blocks import SwinIR as net
+        model = net(upscale=args.scale, in_chans=3, img_size=64, window_size=8,
+                    img_range=1., depths=[6, 6, 6, 6], embed_dim=60, num_heads=[6, 6, 6, 6],
+                    mlp_ratio=2, upsampler='pixelshuffledirect', resi_connection='1conv')
+        param_key_g = 'params'
+
+    elif args.task == 'randomfix_noswin_sr':
+        from models.network_onlyattnnoir_randomfix_blocks import SwinIR as net
+        model = net(upscale=args.scale, in_chans=3, img_size=64, window_size=8,
+                    img_range=1., depths=[6, 6, 6, 6], embed_dim=60, num_heads=[6, 6, 6, 6],
+                    mlp_ratio=2, upsampler='pixelshuffledirect', resi_connection='1conv')
+        param_key_g = 'params'
+
     pretrained_model = torch.load(args.model_path)
     model.load_state_dict(pretrained_model[param_key_g] if param_key_g in pretrained_model.keys() else pretrained_model, strict=True)
     return model
+
 
 
 def setup(args):
