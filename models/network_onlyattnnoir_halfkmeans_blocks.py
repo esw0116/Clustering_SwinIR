@@ -366,6 +366,7 @@ class WindowAttention(nn.Module):
 
             if mask is not None:
                 nW = mask.shape[0]
+                # print('b: ', mask.shape)
                 # print('B: ',attn.shape)
                 attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
                 # print('C: ',attn.shape)
@@ -451,6 +452,7 @@ class ClusteredTransformerBlock(nn.Module):
 
         H, W = self.input_resolution
         w_size = H//self.window_size, (self.num_groups//4)*(W//self.window_size)
+
         if self.shift_size > 0:
             attn_mask = self.calculate_mask(w_size)
         else:
@@ -477,7 +479,7 @@ class ClusteredTransformerBlock(nn.Module):
         mask_windows = window_partition(img_mask, [2, self.num_groups//2])  # nW, 2, num_groups//2, 1
         mask_windows = mask_windows.view(-1, self.num_groups)
         attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
-        attn_mask = attn_mask.masked_fill(attn_mask != 0, float(1.0)).masked_fill(attn_mask == 0, float(0.0))
+        attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
 
         return attn_mask
 
@@ -502,8 +504,13 @@ class ClusteredTransformerBlock(nn.Module):
         x_windows = x_windows.view(-1, self.num_groups, C)
         # print('2', x_windows.shape)
 
+        if self.input_resolution == x_size:
+            attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
+        else:
+            attn_windows = self.attn(x_windows, mask=self.calculate_mask(x_size).to(x.device))
+
         # W-MSA/SW-MSA (to be compatible for testing on images whose shapes are the multiple of window size
-        attn_windows = self.attn(x_windows, mask=self.attn_mask, attn_labels=attn_labels, x_windows=x_windows)  # nW*B, L, C
+        # attn_windows = self.attn(x_windows, mask=self.attn_mask, attn_labels=attn_labels, x_windows=x_windows)  # nW*B, L, C
         # print('3', attn_windows.shape)
 
         attn_windows = attn_windows.view(-1, 2, self.num_groups//2, C)
@@ -901,11 +908,10 @@ class BasicClusterLayer(nn.Module):
                 # labels += label_adders
                 
                 x_centers = x_centers.unsqueeze(1)  # b, 1, num_groups, c
-                # print(x_centers.shape)
                 x_centers = window_reverse(x_centers, [1, self.num_groups//4], H//self.window_size, (self.num_groups//4)*(W//self.window_size))
-                # print('0', x_centers.shape)
                 x_centers_size = x_centers.shape[1:3]
                 x_centers = x_centers.view(B, -1, C)
+                # print('0', x_centers.shape, x_centers_size)
 
                 if self.keep_v:
                     if self.use_nsml:
