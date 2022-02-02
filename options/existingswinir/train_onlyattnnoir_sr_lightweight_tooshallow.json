@@ -32,14 +32,14 @@
   }
 
   , "netG": {
-    "net_type": "onlyattnir" 
+    "net_type": "onlyattnnoir" 
     , "upscale": 2                      // 2 | 3  | 4
     , "in_chans": 3 
     , "img_size": 64
     , "window_size": 8  
     , "img_range": 1.0 
-    , "depths": [4, 4, 4, 4]
-    , "embed_dim": 60
+    , "depths": [6, 6, 6, 6]
+    , "embed_dim": 42
     , "num_heads": [6, 6, 6, 6]
     , "mlp_ratio": 2 
     , "upsampler": "pixelshuffledirect"        // "pixelshuffle" | "pixelshuffledirect" | "nearest+conv" | null
