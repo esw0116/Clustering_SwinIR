@@ -39,12 +39,12 @@
     , "window_size": 8
     , "num_groups": 16
     , "img_range": 1.0
-    , "depths": [6, 6, 6, 6]
-    , "blocks":["RPCTB","RTB","RPCTB","RTB"]
-    , "keep_v": false
+    , "depths": [6, 6]
+    , "blocks":["RPCTB","RPCTB"]
+    , "keep_v": true
     , "recycle": true
     , "embed_dim": 60 
-    , "num_heads": [6, 6, 6, 6]
+    , "num_heads": [6, 6]
     , "mlp_ratio": 2 
     , "upsampler": "pixelshuffledirect"        // "pixelshuffle" | "pixelshuffledirect" | "nearest+conv" | null
     , "resi_connection": "1conv"        // "1conv" | "3conv"
@@ -77,6 +77,6 @@
     , "checkpoint_test": 2500           // for testing
     , "checkpoint_save": 2500           // for saving model
     , "checkpoint_print": 250           // for print
-    , "total_iters": 250000             // total iterations for training
+    , "total_iters": 500000             // total iterations for training
   }
 }
