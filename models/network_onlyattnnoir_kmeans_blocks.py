@@ -274,7 +274,7 @@ class WindowAttention(nn.Module):
         proj_drop (float, optional): Dropout ratio of output. Default: 0.0
     """
 
-    def __init__(self, dim, window_size, num_heads, keep_v=False, qkv_bias=True, qk_scale=None, attn_drop=0., proj_drop=0.):
+    def __init__(self, dim, window_size, num_heads, keep_v=False, relative_bias=False, qkv_bias=True, qk_scale=None, attn_drop=0., proj_drop=0.):
 
         super().__init__()
         self.dim = dim
@@ -282,6 +282,7 @@ class WindowAttention(nn.Module):
         self.num_heads = num_heads
         head_dim = dim // num_heads
         self.keep_v = keep_v
+        self.relative_bias = relative_bias
         self.scale = qk_scale or head_dim ** -0.5
 
         # define a parameter table of relative position bias
@@ -289,17 +290,18 @@ class WindowAttention(nn.Module):
             # torch.zeros((2 * window_size[0] - 1) * (2 * window_size[1] - 1), num_heads))  # 2*Wh-1 * 2*Ww-1, nH
 
         # get pair-wise relative position index for each token inside the window
-        # coords_h = torch.arange(self.window_size[0])
-        # coords_w = torch.arange(self.window_size[1])
-        # coords = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, Wh, Ww
-        # coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
-        # relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
-        # relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2
-        # relative_coords[:, :, 0] += self.window_size[0] - 1  # shift to start from 0
-        # relative_coords[:, :, 1] += self.window_size[1] - 1
-        # relative_coords[:, :, 0] *= 2 * self.window_size[1] - 1
-        # relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
-        # self.register_buffer("relative_position_index", relative_position_index)
+        if self.relative_bias:
+            coords_h = torch.arange(self.window_size[0])
+            coords_w = torch.arange(self.window_size[1])
+            coords = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, Wh, Ww
+            coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
+            relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]  # 2, Wh*Ww, Wh*Ww
+            relative_coords = relative_coords.permute(1, 2, 0).contiguous()  # Wh*Ww, Wh*Ww, 2
+            relative_coords[:, :, 0] += self.window_size[0] - 1  # shift to start from 0
+            relative_coords[:, :, 1] += self.window_size[1] - 1
+            relative_coords[:, :, 0] *= 2 * self.window_size[1] - 1
+            relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
+            self.register_buffer("relative_position_index", relative_position_index)
 
         if self.keep_v:
             self.qk = nn.Linear(dim, dim * 2, bias=qkv_bias) # 96 -> 192
@@ -339,26 +341,11 @@ class WindowAttention(nn.Module):
             attn = attn_.gather(dim=2, index=attn_labels.view(B__, 1, -1).repeat(1,self.num_heads,1))
             attn = attn.view(B_, self.num_heads, N_, N_)
 
-            # relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
-            #     self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
-            # relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
-            # attn = relative_position_bias.unsqueeze(0).expand(B_, -1, -1, -1)
-
-            if mask is not None:
-                nW = mask.shape[0]
-                # print('B: ',attn.shape)
-                attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
-                # print('C: ',attn.shape)
-                attn = attn.view(-1, self.num_heads, N, N)
-                attn = self.softmax(attn)
-            else:
-                attn = self.softmax(attn)
-
-            attn = self.attn_drop(attn)
-
-            x = (attn @ v).transpose(1, 2).reshape(B__, N_, C_)
-            x = self.proj(x)
-            x = self.proj_drop(x)
+            if self.relative_bias:
+                relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
+                    self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
+                relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
+                attn += relative_position_bias.unsqueeze(0).expand(B_, -1, -1, -1)
 
         else:
             B_, N, C = x.shape
@@ -373,21 +360,19 @@ class WindowAttention(nn.Module):
             # relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
             # attn = relative_position_bias.unsqueeze(0).expand(B_, -1, -1, -1)
 
-            if mask is not None:
-                nW = mask.shape[0]
-                # print('B: ',attn.shape)
-                attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
-                # print('C: ',attn.shape)
-                attn = attn.view(-1, self.num_heads, N, N)
-                attn = self.softmax(attn)
-            else:
-                attn = self.softmax(attn)
+        if mask is not None:
+            nW = mask.shape[0]
+            attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
+            attn = attn.view(-1, self.num_heads, N, N)
+            attn = self.softmax(attn)
+        else:
+            attn = self.softmax(attn)
 
-            attn = self.attn_drop(attn)
+        attn = self.attn_drop(attn)
 
-            x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
-            x = self.proj(x)
-            x = self.proj_drop(x)
+        x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
             
         return x
 
@@ -431,13 +416,14 @@ class ClusteredTransformerBlock(nn.Module):
     """
 
     def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0, keep_v=False, num_groups=16,
-                 mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0., drop_path=0.,
+                 relative_bias=False, mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0., drop_path=0.,
                  act_layer=nn.GELU, norm_layer=nn.LayerNorm):
         super().__init__()
         self.dim = dim
         self.input_resolution = input_resolution
         self.num_heads = num_heads
         self.keep_v = keep_v
+        self.relative_bias = relative_bias
         self.num_groups = num_groups
         self.window_size = window_size
         self.shift_size = shift_size
@@ -450,7 +436,7 @@ class ClusteredTransformerBlock(nn.Module):
 
         self.norm1 = norm_layer(dim)
         self.attn = WindowAttention(
-            dim, window_size=(num_groups, 1), num_heads=num_heads, keep_v=keep_v,
+            dim, window_size=(num_groups, 1), num_heads=num_heads, keep_v=keep_v, relative_bias=relative_bias,
             qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
 
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
@@ -773,7 +759,7 @@ class BasicClusterLayer(nn.Module):
     """
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size, keep_v=False, recycle=True, num_groups=16,
-                 mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
+                 relative_bias=False, mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False, use_nsml=False):
 
         super().__init__()
@@ -783,6 +769,7 @@ class BasicClusterLayer(nn.Module):
         self.use_checkpoint = use_checkpoint
         self.window_size = window_size
         self.keep_v = keep_v
+        self.relative_bias = relative_bias
         self.recycle = recycle
         self.num_groups = num_groups
         self.use_nsml = use_nsml
@@ -801,6 +788,7 @@ class BasicClusterLayer(nn.Module):
             ClusteredTransformerBlock(dim=dim, input_resolution=input_resolution,
                                 num_heads=num_heads, window_size=window_size*2, 
                                 keep_v=keep_v,
+                                relative_bias=relative_bias,
                                 num_groups=self.num_groups,
                                 shift_size=0,
                                 mlp_ratio=mlp_ratio,
@@ -1009,7 +997,7 @@ class RPCTB(nn.Module):
     """
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size, keep_v=False, recycle=True, num_groups=16,
-                 mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
+                 relative_bias=False, mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False,
                  img_size=224, patch_size=4, resi_connection='1conv', use_nsml=False):
         super(RPCTB, self).__init__()
@@ -1025,6 +1013,7 @@ class RPCTB(nn.Module):
                                          keep_v=keep_v,
                                          recycle=recycle,
                                          num_groups=num_groups,
+                                         relative_bias=relative_bias,
                                          mlp_ratio=mlp_ratio,
                                          qkv_bias=qkv_bias, qk_scale=qk_scale,
                                          drop=drop, attn_drop=attn_drop,
@@ -1217,7 +1206,7 @@ class SwinIR(nn.Module):
 
     def __init__(self, img_size=64, patch_size=1, in_chans=3,
                  embed_dim=96, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6], blocks=['RPCTB','RTB', 'RPCTB','RTB'], num_groups=16, 
-                 window_size=7, mlp_ratio=4., keep_v=False, recycle=True, qkv_bias=True, qk_scale=None,
+                 window_size=7, relative_bias=False, mlp_ratio=4., keep_v=False, recycle=True, qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
                  use_checkpoint=False, upscale=2, img_range=1., upsampler='pixelshuffledirect', resi_connection='1conv', use_nsml=True
@@ -1291,6 +1280,7 @@ class SwinIR(nn.Module):
                          keep_v=keep_v,
                          recycle=recycle,
                          num_groups=num_groups,
+                         relative_bias=relative_bias,
                          mlp_ratio=self.mlp_ratio,
                          qkv_bias=qkv_bias, qk_scale=qk_scale,
                          drop=drop_rate, attn_drop=attn_drop_rate,

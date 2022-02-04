@@ -125,6 +125,7 @@ def main():
             ave_ssim_y = sum(test_results['ssim_y']) / len(test_results['ssim_y'])
             print('-- Average PSNR_Y/SSIM_Y: {:.2f} dB; {:.4f}'.format(ave_psnr_y, ave_ssim_y))
         ave_runtime = sum(test_results['latency'][1:]) / len(test_results['latency'][1:])
+        print(len(test_results['latency'][1:]))
         print('-- Average Runtime: {:.2f} sec'.format(ave_runtime))
 
 def define_model(args):
@@ -202,6 +203,22 @@ def define_model(args):
         model = net(upscale=args.scale, img_size=64, in_chans=3, window_size=8,
                  img_range=1., embed_dim=60, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6],
                  blocks=block, num_groups=16, keep_v=keepv, recycle=recycle,
+                 mlp_ratio=2., upsampler='pixelshuffledirect', resi_connection='1conv')
+        param_key_g = 'params'
+    
+    elif args.task == 'kmeans_normpost_sr':
+        from models.network_onlyattnnoir_kmeans_normblocks import SwinIR as net
+        model = net(upscale=args.scale, img_size=64, in_chans=3, window_size=8,
+                 img_range=1., embed_dim=60, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6],
+                 blocks=['RPCTB','RTB','RPCTB','RTB'], num_groups=16, keep_v=False, recycle=True,
+                 mlp_ratio=2., upsampler='pixelshuffledirect', resi_connection='1conv')
+        param_key_g = 'params'
+
+    elif args.task == 'intrakmeans_post_sr':
+        from models.network_onlyattnnoir_intrakmeans_blocks import SwinIR as net
+        model = net(upscale=args.scale, img_size=64, in_chans=3, window_size=8,
+                 img_range=1., embed_dim=60, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6],
+                 blocks=['RPCTB','RTB','RPCTB','RTB'], num_groups=16, keep_v=False, recycle=True,
                  mlp_ratio=2., upsampler='pixelshuffledirect', resi_connection='1conv')
         param_key_g = 'params'
 

@@ -14,7 +14,12 @@
 # python main_test_clustertransformer.py --benchmark Urban100 --task kmeans_postkeepvnorecycle_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_290/500000/model/G.pth
 # python main_test_clustertransformer.py --benchmark Urban100 --task onlySA_shallow_no_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_335/250000/model/G.pth
 # python main_test_clustertransformer.py --benchmark Urban100 --task onlySA_thin_no_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_302/250000/model/G.pth
-# python main_test_clustertransformer.py --benchmark Urban100 --task onlySA_tooshort_no_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_336/250000/model/G.pth
+# python main_test_clustertransformer.py --benchmark Urban100 --task onlySA_short_no_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_352/250000/model/G.pth
+# python main_test_clustertransformer.py --benchmark Urban100 --task onlySA_tooshallow_no_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_348/250000/model/G.pth
+# python main_test_clustertransformer.py --benchmark Urban100 --task onlySA_toothin_no_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_337/250000/model/G.pth
+python main_test_clustertransformer.py --benchmark Urban100 --task onlySA_tooshort_no_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_336/250000/model/G.pth
 # python main_test_clustertransformer.py --benchmark Urban100 --task blockcluster_noswin_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_330/250000/model/G.pth
 # python main_test_clustertransformer.py --benchmark Urban100 --task random_noswin_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_334/250000/model/G.pth
-python main_test_clustertransformer.py --benchmark Set5 --task randomfix_noswin_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_339/215000/model/G.pth
+# python main_test_clustertransformer.py --benchmark Urban100 --task randomfix_noswin_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_339/250000/model/G.pth
+python main_test_clustertransformer.py --benchmark Urban100 --task intrakmeans_post_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_346/195000/model/G.pth
+# python main_test_clustertransformer.py --benchmark Urban100 --task kmeans_normpost_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_385/250000/model/G.pth
