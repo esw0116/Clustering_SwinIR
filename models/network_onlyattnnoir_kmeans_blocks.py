@@ -370,7 +370,7 @@ class WindowAttention(nn.Module):
 
         attn = self.attn_drop(attn)
 
-        x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
+        x = (attn @ v).transpose(1, 2).reshape(B_, N_, C_) if self.keep_v else (attn @ v).transpose(1, 2).reshape(B_, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
             
@@ -452,6 +452,8 @@ class ClusteredTransformerBlock(nn.Module):
             shortcut = x_windows
         else:
             shortcut = x
+        
+        x = self.norm1(x)
 
         # W-MSA/SW-MSA (to be compatible for testing on images whose shapes are the multiple of window size
         x = self.attn(x, mask=None, attn_labels=attn_labels, x_windows=x_windows)  # nW*B, L, C
