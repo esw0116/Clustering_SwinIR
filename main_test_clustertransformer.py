@@ -24,17 +24,7 @@ def main():
     args = parser.parse_args()
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    # set up model
-    if os.path.exists(args.model_path):
-        # print(f'loading model from {args.model_path}')
-        pass
-    else:
-        os.makedirs(os.path.dirname(args.model_path), exist_ok=True)
-        url = 'https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/{}'.format(os.path.basename(args.model_path))
-        r = requests.get(url, allow_redirects=True)
-        print(f'downloading model {args.model_path}')
-        open(args.model_path, 'wb').write(r.content)
-        
+    
     model = define_model(args)
     model.eval()
     model = model.to(device)
@@ -125,7 +115,7 @@ def main():
             ave_ssim_y = sum(test_results['ssim_y']) / len(test_results['ssim_y'])
             print('-- Average PSNR_Y/SSIM_Y: {:.2f} dB; {:.4f}'.format(ave_psnr_y, ave_ssim_y))
         ave_runtime = sum(test_results['latency'][1:]) / len(test_results['latency'][1:])
-        print(len(test_results['latency'][1:]))
+        # print(len(test_results['latency'][1:]))
         print('-- Average Runtime: {:.2f} sec'.format(ave_runtime))
 
 def define_model(args):
@@ -180,17 +170,24 @@ def define_model(args):
                     mlp_ratio=2, upsampler='pixelshuffledirect', resi_connection='1conv')
         param_key_g = 'params'
 
-    elif args.task in ['kmeans_sr', 'kmeans_post_sr', 'kmeans_postkeepv_sr', 'kmeans_postkeepvnorecycle_sr', 'kmeans_last_sr']:
+    elif args.task in ['kmeans_sr', 'kmeans_post_sr', 'kmeans_postkeepv_sr', 'kmeans_postkeepvnorecycle_sr', 'kmeans_last_sr', 'kmeans_postkeepv_bias_sr',
+                        'kmeans_tooshort_sr', 'kmeans_tooshortkeepv_sr']:
         from models.network_onlyattnnoir_kmeans_blocks import SwinIR as net
         
+        depth = [6,6,6,6]
+        head = [6,6,6,6]
         if args.task == 'kmeans_sr':
             block = ['RTB','RPCTB','RTB','RPCTB']
         elif args.task == 'kmeans_last_sr':
             block=['RPCTB','RPCTB','RPCTB','RTB']
+        elif args.task == 'kmeans_tooshort_sr' or args.task == 'kmeans_tooshortkeepv_sr':
+            block=['RPCTB','RPCTB']
+            depth = [6,6]
+            head = [6,6]
         else:
             block=['RPCTB','RTB','RPCTB','RTB']
             
-        if args.task == 'kmeans_postkeepv_sr' or args.task == 'kmeans_postkeepvnorecycle_sr':
+        if 'keepv' in args.task:
             keepv = True
         else:
             keepv = False
@@ -200,9 +197,14 @@ def define_model(args):
         else:
             recycle = True
         
+        if args.task == 'kmeans_postkeep_bias_sr':
+            relative_bias = True
+        else:
+            relative_bias = False
+
         model = net(upscale=args.scale, img_size=64, in_chans=3, window_size=8,
-                 img_range=1., embed_dim=60, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6],
-                 blocks=block, num_groups=16, keep_v=keepv, recycle=recycle,
+                 img_range=1., embed_dim=60, depths=depth, num_heads=head,
+                 blocks=block, num_groups=16, keep_v=keepv, recycle=recycle, relative_bias=relative_bias,
                  mlp_ratio=2., upsampler='pixelshuffledirect', resi_connection='1conv')
         param_key_g = 'params'
     
@@ -216,6 +218,14 @@ def define_model(args):
 
     elif args.task == 'intrakmeans_post_sr':
         from models.network_onlyattnnoir_intrakmeans_blocks import SwinIR as net
+        model = net(upscale=args.scale, img_size=64, in_chans=3, window_size=8,
+                 img_range=1., embed_dim=60, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6],
+                 blocks=['RPCTB','RTB','RPCTB','RTB'], num_groups=16, keep_v=False, recycle=True,
+                 mlp_ratio=2., upsampler='pixelshuffledirect', resi_connection='1conv')
+        param_key_g = 'params'
+
+    elif args.task == 'halfkmeans_post_sr':
+        from models.network_onlyattnnoir_halfkmeans_blocks import SwinIR as net
         model = net(upscale=args.scale, img_size=64, in_chans=3, window_size=8,
                  img_range=1., embed_dim=60, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6],
                  blocks=['RPCTB','RTB','RPCTB','RTB'], num_groups=16, keep_v=False, recycle=True,

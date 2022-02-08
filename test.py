@@ -1,7 +1,5 @@
 import torch
-# from models.network_swinir import SwinIR
-# from models.network_blockcompnoswinir2 import SwinIR
-from models.network_onlyattnnoir_halfkmeans_blocks import SwinIR
+from models.network_onlyattnnoir_kmeans_compmlp import SwinIR
 
 def main():
     net = SwinIR(window_size=8, upsampler='pixelshuffledirect')

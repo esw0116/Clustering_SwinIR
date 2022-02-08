@@ -348,8 +348,8 @@ def define_G(opt, use_nsml):
                    resi_connection=opt_net['resi_connection'],
                    use_nsml = use_nsml)
 
-    elif net_type == 'normblock_kmeans':
-        from models.network_onlyattnnoir_kmeans_normblocks import SwinIR as net
+    elif net_type == 'block_kmeans_mlp':
+        from models.network_onlyattnnoir_kmeans_compmlp import SwinIR as net
         netG = net(upscale=opt_net['upscale'],
                    in_chans=opt_net['in_chans'],
                    img_size=opt_net['img_size'],
