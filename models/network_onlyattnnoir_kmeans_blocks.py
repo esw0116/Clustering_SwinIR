@@ -5,7 +5,6 @@
 from tokenize import group
 import typing
 import numpy as np
-from matplotlib.pyplot import new_figure_manager
 from tqdm import tqdm
 import math
 import torch
@@ -326,6 +325,11 @@ class WindowAttention(nn.Module):
             nW = mask.shape[0]
             attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
             attn = attn.view(-1, self.num_heads, N, N)
+
+        # Put -100 to the column of attention map which does not have any elements (pixels)
+        attn_ =  attn.permute(0,3,1,2)
+        attn_[cnt_labels == 0] = -100
+        attn = attn_.permute(0,2,3,1)
 
         if self.keep_v:
             maxes = torch.max(attn, -1, keepdim=True)[0]
@@ -771,7 +775,7 @@ class BasicClusterLayer(nn.Module):
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size, keep_v=False, recycle=True, num_groups=16,
                  relative_bias=False, mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
-                 drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False, use_nsml=False):
+                 drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False):
 
         super().__init__()
         self.dim = dim
@@ -783,7 +787,6 @@ class BasicClusterLayer(nn.Module):
         self.relative_bias = relative_bias
         self.recycle = recycle
         self.num_groups = num_groups
-        self.use_nsml = use_nsml
         
         self.clustering = Clustering(self.num_groups, n_init=1)
         
@@ -849,10 +852,7 @@ class BasicClusterLayer(nn.Module):
             if self.use_checkpoint:
                 x_centers = checkpoint.checkpoint(blk, x_centers, x_size)
             else:
-                if self.keep_v:
-                    x_windows = blk(x_centers, x_size, labels=labels, cnt_labels=cnt_labels, x_windows=x_windows)
-                else:
-                    x_centers = blk(x_centers, x_size)
+                x_windows = blk(x_centers, x_size, labels=labels, cnt_labels=cnt_labels, x_windows=x_windows)
         
         timer_list = self.measure_time(msg='window_partition', timer_list=timer_list)
 
@@ -927,7 +927,7 @@ class RSTB(nn.Module):
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False,
-                 img_size=224, patch_size=4, resi_connection='1conv', use_nsml=False):
+                 img_size=224, patch_size=4, resi_connection='1conv'):
         super(RSTB, self).__init__()
 
         self.dim = dim
@@ -1002,7 +1002,7 @@ class RPCTB(nn.Module):
     def __init__(self, dim, input_resolution, depth, num_heads, window_size, keep_v=False, recycle=True, num_groups=16,
                  relative_bias=False, mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False,
-                 img_size=224, patch_size=4, resi_connection='1conv', use_nsml=False):
+                 img_size=224, patch_size=4, resi_connection='1conv'):
         super(RPCTB, self).__init__()
 
         self.dim = dim
@@ -1024,7 +1024,7 @@ class RPCTB(nn.Module):
                                          norm_layer=norm_layer,
                                          downsample=downsample,
                                          use_checkpoint=use_checkpoint,
-                                         use_nsml=use_nsml)
+                                         )
 
         if resi_connection == '1conv':
             self.conv = nn.Conv2d(dim, dim, 3, 1, 1)
@@ -1212,7 +1212,7 @@ class SwinIR(nn.Module):
                  window_size=7, relative_bias=False, mlp_ratio=4., keep_v=False, recycle=True, qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
                  norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
-                 use_checkpoint=False, upscale=2, img_range=1., upsampler='pixelshuffledirect', resi_connection='1conv', use_nsml=True
+                 use_checkpoint=False, upscale=2, img_range=1., upsampler='pixelshuffledirect', resi_connection='1conv'
                  ):
         super(SwinIR, self).__init__()
         num_in_ch = in_chans
@@ -1227,7 +1227,6 @@ class SwinIR(nn.Module):
         self.upscale = upscale
         self.upsampler = upsampler
         self.window_size = window_size
-        self.use_nsml = use_nsml
         
         #####################################################################################################
         ################################### 1, shallow feature extraction ###################################
@@ -1294,7 +1293,6 @@ class SwinIR(nn.Module):
                          img_size=img_size,
                          patch_size=patch_size,
                          resi_connection=resi_connection,
-                         use_nsml=use_nsml
                          )
             elif blocks[i_layer] == 'RTB':
                 layer = RSTB(dim=embed_dim,
@@ -1313,7 +1311,6 @@ class SwinIR(nn.Module):
                          img_size=img_size,
                          patch_size=patch_size,
                          resi_connection=resi_connection,
-                         use_nsml=use_nsml
                          )
             else:
                 raise NotImplementedError()
