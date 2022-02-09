@@ -364,7 +364,7 @@ def define_G(opt, use_nsml):
                    mlp_ratio=opt_net['mlp_ratio'],
                    upsampler=opt_net['upsampler'],
                    resi_connection=opt_net['resi_connection'],
-                   use_nsml = use_nsml)
+                   )
 
     elif net_type == 'block_intrakmeans':
         from models.network_onlyattnnoir_intrakmeans_blocks import SwinIR as net

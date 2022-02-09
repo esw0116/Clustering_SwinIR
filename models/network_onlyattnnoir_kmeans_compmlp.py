@@ -458,7 +458,7 @@ class ClusteredTransformerBlock(nn.Module):
 
     def forward(self, x, x_size, labels=None, cnt_labels=None, x_windows=None):
         # H, W = x_size
-        # B, L, C = x.shape
+        B, L, C = x.shape
 
         if self.keep_v:
             shortcut = x_windows
@@ -473,11 +473,11 @@ class ClusteredTransformerBlock(nn.Module):
         if self.keep_v:
             x_avgs = x.gather(
                 dim=1,
-                index=labels.view(*labels.size(), 1).repeat(1, 1, c),
+                index=labels.view(*labels.size(), 1).repeat(1, 1, C),
             )
-            x_diff = x_winodws - x_avgs
+            x_diff = x_windows - x_avgs
             x_compensate = self.diffcomp(x_diff)
-            shortcut += x_compensate
+            shortcut = x_compensate
 
         # FFN
         x = shortcut + self.drop_path(x)
