@@ -33,152 +33,37 @@ class PWD(nn.Module):
 
         return min_dists, min_labels
 
-class Clustering():
+def construct_centroid(
+        num_groups,
+        points_flat: torch.Tensor,
+        labels: torch.Tensor) -> torch.Tensor:
 
-    def __init__(
-            self,
-            k: int,
-            n_init: int=1,
-            max_iter: int=200) -> None:
-        '''
-            input arguments
-                n_init:
-                    number of different trials for k-means clustering
+    # batch size
+    b, n, n_feats = points_flat.size()
+    # b = labels.size(0)
 
-                max_iter:
-                    maximum iteration for k-means clustering
+    # (B x k, C)
+    points_flat = points_flat.view(b*n, n_feats)
+    centroids_flat = points_flat.new_zeros(b * num_groups, n_feats)
+    ones_flat = points_flat.new_ones(b*n).long()
 
-                symmetry:
-                    transform invariant clustering parameter
+    label_adder = num_groups * torch.arange(
+        b,
+        dtype=torch.long,
+        device=labels.device,
+    )
+    label_adder = label_adder.view(-1, 1)
 
-                    i           default k-means clustering
-                    ih          horizontal flip invariant clustering
-                    ihvo        flip invariant clustering
-                    ihvoIHVO    flip and rotation invariant clustering
+    # (B x N)
+    labels_flat = (labels + label_adder).view(-1)
+    centroids_flat.index_add_(0, labels_flat, points_flat)
 
-                cpu and n_GPUs:
-                    you can use multiple GPUs for k-means clustering
-        '''
+    counts_flat = labels_flat.new_zeros(b * num_groups)
+    counts_flat = counts_flat.index_add_(0, labels_flat, ones_flat)
 
-        self.k = k
-        self.n_init = n_init
-        self.max_iter = max_iter
-        return
-
-    def fit(
-            self,
-            points: torch.Tensor,
-            init_type: str='random',
-            enable_gradient: bool=False) -> typing.Tuple[torch.Tensor, torch.Tensor]:
-
-        '''
-        We assume that the input points are batched, e.g., (B, N, C)
-        
-        '''
-
-        best = 1e8
-        for _ in range(self.n_init):
-            centroids, labels, cost = self.cluster(points)
-
-            if cost < best:
-                self.cluster_centers_ = centroids.clone()
-                self.labels_ = labels.clone()
-                best = cost
-
-        # print('Best round: {}'.format(best_idx))
-        if enable_gradient:
-            points_flat = points.view(points.size(0) * points.size(1), -1)
-            self.cluster_centers_ = self.construct_centroid(
-                points_flat, self.labels_,
-            )
-
-        return self.cluster_centers_, self.labels_
-
-    def construct_centroid(
-            self,
-            points_flat: torch.Tensor,
-            labels: torch.Tensor) -> torch.Tensor:
-
-        # batch size
-        bn, n_feats = points_flat.size()
-        b = labels.size(0)
-
-        # (B x k, C)
-        centroids_flat = points_flat.new_zeros(b * self.k, n_feats)
-        ones_flat = points_flat.new_ones(bn).long()
-
-        label_adder = self.k * torch.arange(
-            b,
-            dtype=torch.long,
-            device=labels.device,
-        )
-        label_adder = label_adder.view(-1, 1)
-
-        # (B x N)
-        labels_flat = (labels + label_adder).view(-1)
-
-        centroids_flat.index_add_(0, labels_flat, points_flat)
-
-        counts_flat = labels_flat.new_zeros(b * self.k)
-        counts_flat = counts_flat.index_add_(0, labels_flat, ones_flat)
-
-        centroids_flat.div_(counts_flat.unsqueeze(-1) + 1e-8)
-        centroids = centroids_flat.view(b, self.k, n_feats)
-        return centroids
-
-    @torch.no_grad()
-    def cluster(self, points: torch.Tensor, log=False):
-        '''
-        We assume that the input points are batched, e.g., (B, N, C)
-        
-        '''
-        # (B, N, C)
-        b, n, n_feats = points.size()
-
-        # (B x N, C)
-        points_flat = points.view(b * n, n_feats)
-
-        # (B, N)
-        #labels = torch.LongTensor(b, n, device=points.device)
-        labels = torch.full((b, n), -1, dtype=torch.long, device=points.device)
-
-        ones = points.new_ones(b, n)
-
-        # (B, k)
-        init_seeds = ones.multinomial(self.k, replacement=False)
-        init_seeds_adder = n * torch.arange(
-            b,
-            dtype=torch.long,
-            device=init_seeds.device,
-        )
-        init_seeds_adder = init_seeds_adder.view(-1, 1)
-        init_seeds_flat = (init_seeds + init_seeds_adder).view(-1)
-        centroids_flat = points_flat[init_seeds_flat]
-
-        # (B, k, C)
-        centroids = centroids_flat.view(b, self.k, n_feats)
-
-        #centroids = points[init_seeds]
-        #print('centroids', centroids.size())
-        #print('points:', points.size())
-        #print('init_seeds:', init_seeds.size())
-
-        for i in range(self.max_iter):
-            # (B, N, k)
-            pwd = torch.cdist(points, centroids)
-
-            # (B, N) respectively
-            min_dists, min_labels = pwd.min(-1)
-            cost = min_dists.mean().item()
-            change = (min_labels != labels).sum().item()
-            if change == 0 and i > 0:
-                break
-
-            centroids = self.construct_centroid(points_flat, min_labels)
-            labels = min_labels
-
-        return centroids, labels, cost
-
+    centroids_flat.div_(counts_flat.unsqueeze(-1) + 1e-8)
+    centroids = centroids_flat.view(b, num_groups, n_feats)
+    return centroids
 
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
@@ -301,7 +186,7 @@ class WindowAttention(nn.Module):
             q, k = qk[0], qk[1]  # make torchscript happy (cannot use tensor as tuple)
 
             v = self.v(x_windows)
-            v = self.construct_centroid(N, v, labels)
+            v = construct_centroid(N, v, labels)
             v = v.reshape(B_, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
 
             q = q * self.scale
@@ -354,39 +239,6 @@ class WindowAttention(nn.Module):
             )
         
         return x
-
-    def construct_centroid(
-            self,
-            num_groups,
-            points_flat: torch.Tensor,
-            labels: torch.Tensor) -> torch.Tensor:
-
-        # batch size
-        b, n, n_feats = points_flat.size()
-        # b = labels.size(0)
-
-        # (B x k, C)
-        points_flat = points_flat.view(b*n, n_feats)
-        centroids_flat = points_flat.new_zeros(b * num_groups, n_feats)
-        ones_flat = points_flat.new_ones(b*n).long()
-
-        label_adder = num_groups * torch.arange(
-            b,
-            dtype=torch.long,
-            device=labels.device,
-        )
-        label_adder = label_adder.view(-1, 1)
-
-        # (B x N)
-        labels_flat = (labels + label_adder).view(-1)
-        centroids_flat.index_add_(0, labels_flat, points_flat)
-
-        counts_flat = labels_flat.new_zeros(b * num_groups)
-        counts_flat = counts_flat.index_add_(0, labels_flat, ones_flat)
-
-        centroids_flat.div_(counts_flat.unsqueeze(-1) + 1e-8)
-        centroids = centroids_flat.view(b, num_groups, n_feats)
-        return centroids
 
     def extra_repr(self) -> str:
         return f'dim={self.dim}, window_size={self.window_size}, num_heads={self.num_heads}'
@@ -787,8 +639,8 @@ class BasicClusterLayer(nn.Module):
         self.relative_bias = relative_bias
         self.recycle = recycle
         self.num_groups = num_groups
-        
-        self.clustering = Clustering(self.num_groups, n_init=1)
+        mlp_hidden_dim = int(dim * mlp_ratio)
+        self.gumbel_clustering = Mlp(in_features=dim, hidden_features=dim, out_features=self.num_groups)
         
         self.color_r = {0: 0 , 1: 157, 2: 255, 3: 190, 4: 224, 5: 73, 6: 164, 7: 255, 8: 247, 9: 47, 10:  68, 11: 163, 12: 27, 13:   0, 14:  49, 15: 178}
         self.color_g = {0: 0 , 1: 157, 2: 255, 3:  38, 4: 111, 5: 60, 6: 100, 7: 137, 8: 226, 9: 72, 10: 137, 11: 206, 12: 38, 13:  87, 14: 162, 15: 220}
@@ -844,7 +696,12 @@ class BasicClusterLayer(nn.Module):
             timer_list = self.measure_time(msg=f'Block_{j}', timer_list=timer_list)
 
             if j == 0  or (not self.recycle):
-                x_centers, labels = self.clustering.fit(x_windows, enable_gradient=True)
+                # x_centers, labels = self.clustering.fit(x_windows, enable_gradient=True)
+                x_gumbels = self.gumbel_clustering(x_windows)
+                x_gumbels = F.gumbel_softmax(x_gumbels, dim=-1, hard=True)
+                _, labels = torch.max(x_gumbels, dim=-1)
+                
+                x_centers = construct_centroid(self.num_groups, x_windows, labels)
                 label_ones = torch.ones_like(labels)
                 cnt_labels = torch.zeros(b, self.num_groups).type_as(labels)
                 cnt_labels.scatter_add_(dim=1, index=labels, src=label_ones)
@@ -894,6 +751,8 @@ class BasicClusterLayer(nn.Module):
 
     def flops(self):
         flops = 0
+        H, W = self.input_resolution
+        flops += H * W * self.dim * (self.dim + self.num_groups)
         for blk in self.blocks:
             flops += blk.flops()
         if self.downsample is not None:

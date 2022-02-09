@@ -22,7 +22,7 @@
 
       , "dataloader_shuffle": true
       , "dataloader_num_workers": 16
-      , "dataloader_batch_size": 32      // Total batch size =8x8=64 in SwinIR
+      , "dataloader_batch_size": 64      // Total batch size =8x8=64 in SwinIR
     }
     , "test": {
       "name": "test_dataset"            // just name
@@ -65,7 +65,7 @@
     , "G_optimizer_reuse": true         // 
 
     , "G_scheduler_type": "MultiStepLR" // "MultiStepLR" is enough
-    , "G_scheduler_milestones": [250000, 400000, 450000, 475000, 500000]
+    , "G_scheduler_milestones": [125000, 200000, 225000, 237500, 250000]
     , "G_scheduler_gamma": 0.5
 
     , "G_regularizer_orthstep": null    // unused
