@@ -555,7 +555,7 @@ class BasicLayer(nn.Module):
     """
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
-                 mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
+                 mlp_ratio=4., shifted_window=False, qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False):
 
         super().__init__()
@@ -565,16 +565,28 @@ class BasicLayer(nn.Module):
         self.use_checkpoint = use_checkpoint
 
         # build blocks
-        self.blocks = nn.ModuleList([
-            SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
-                                 num_heads=num_heads, window_size=window_size,
-                                 shift_size=0,
-                                 mlp_ratio=mlp_ratio,
-                                 qkv_bias=qkv_bias, qk_scale=qk_scale,
-                                 drop=drop, attn_drop=attn_drop,
-                                 drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
-                                 norm_layer=norm_layer)
-            for i in range(depth)])
+        if shifted_window:
+            self.blocks = nn.ModuleList([
+                SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
+                                    num_heads=num_heads, window_size=window_size,
+                                    shift_size=0 if (i % 2 == 0) else window_size // 2,
+                                    mlp_ratio=mlp_ratio,
+                                    qkv_bias=qkv_bias, qk_scale=qk_scale,
+                                    drop=drop, attn_drop=attn_drop,
+                                    drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
+                                    norm_layer=norm_layer)
+                for i in range(depth)])
+        else:
+            self.blocks = nn.ModuleList([
+                SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
+                                    num_heads=num_heads, window_size=window_size,
+                                    shift_size=0,
+                                    mlp_ratio=mlp_ratio,
+                                    qkv_bias=qkv_bias, qk_scale=qk_scale,
+                                    drop=drop, attn_drop=attn_drop,
+                                    drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
+                                    norm_layer=norm_layer)
+                for i in range(depth)])
 
         # patch merging layer
         if downsample is not None:
@@ -698,9 +710,13 @@ class BasicClusterLayer(nn.Module):
             if j == 0  or (not self.recycle):
                 # x_centers, labels = self.clustering.fit(x_windows, enable_gradient=True)
                 x_gumbels = self.gumbel_clustering(x_windows)
-                x_gumbels = F.gumbel_softmax(x_gumbels, dim=-1, hard=True)
+                if self.training:
+                    x_gumbels = F.gumbel_softmax(x_gumbels, dim=-1, hard=True)
+                else:
+                    gumbel_index = x_gumbels.max(dim=1, keepdim=True)[1]
+                    x_gumbels = torch.zeros_like(x_windows).scatter_(1, gumbel_index, 1.0)
                 _, labels = torch.max(x_gumbels, dim=-1)
-                
+
                 x_centers = construct_centroid(self.num_groups, x_windows, labels)
                 label_ones = torch.ones_like(labels)
                 cnt_labels = torch.zeros(b, self.num_groups).type_as(labels)
@@ -784,7 +800,7 @@ class RSTB(nn.Module):
     """
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size,
-                 mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
+                 mlp_ratio=4., shifted_window=False, qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False,
                  img_size=224, patch_size=4, resi_connection='1conv'):
         super(RSTB, self).__init__()
@@ -798,6 +814,7 @@ class RSTB(nn.Module):
                                          num_heads=num_heads,
                                          window_size=window_size,
                                          mlp_ratio=mlp_ratio,
+                                         shifted_window=shifted_window,
                                          qkv_bias=qkv_bias, qk_scale=qk_scale,
                                          drop=drop, attn_drop=attn_drop,
                                          drop_path=drop_path,
@@ -1068,9 +1085,8 @@ class SwinIR(nn.Module):
 
     def __init__(self, img_size=64, patch_size=1, in_chans=3,
                  embed_dim=96, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6], blocks=['RPCTB','RTB', 'RPCTB','RTB'], num_groups=16, 
-                 window_size=7, relative_bias=False, mlp_ratio=4., keep_v=False, recycle=True, qkv_bias=True, qk_scale=None,
-                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
-                 norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
+                 window_size=7, relative_bias=False, mlp_ratio=4., shifted_window=False, keep_v=False, recycle=True, qkv_bias=True, qk_scale=None,
+                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1, norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
                  use_checkpoint=False, upscale=2, img_range=1., upsampler='pixelshuffledirect', resi_connection='1conv'
                  ):
         super(SwinIR, self).__init__()
@@ -1161,6 +1177,7 @@ class SwinIR(nn.Module):
                          num_heads=num_heads[i_layer],
                          window_size=window_size,
                          mlp_ratio=self.mlp_ratio,
+                         shifted_window=shifted_window,
                          qkv_bias=qkv_bias, qk_scale=qk_scale,
                          drop=drop_rate, attn_drop=attn_drop_rate,
                          drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],  # no impact on SR results

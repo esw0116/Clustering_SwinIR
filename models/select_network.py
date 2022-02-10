@@ -365,6 +365,7 @@ def define_G(opt, use_nsml):
                    embed_dim=opt_net['embed_dim'],
                    num_heads=opt_net['num_heads'],
                    mlp_ratio=opt_net['mlp_ratio'],
+                   shifted_window=opt_net['shifted_window'],
                    upsampler=opt_net['upsampler'],
                    resi_connection=opt_net['resi_connection'],
                    )
