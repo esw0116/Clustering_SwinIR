@@ -32,7 +32,7 @@
   }
 
   , "netG": {
-    "net_type": "block_kmeans" 
+    "net_type": "block_gumbel" 
     , "upscale": 2                      // 2 | 3  | 4
     , "in_chans": 3 
     , "img_size": 64
@@ -43,6 +43,7 @@
     , "blocks":["RPCTB","RTB","RPCTB","RTB"]
     , "keep_v": true
     , "recycle": true
+    , "shifted_window": true
     , "embed_dim": 60 
     , "num_heads": [6, 6, 6, 6]
     , "mlp_ratio": 2 
