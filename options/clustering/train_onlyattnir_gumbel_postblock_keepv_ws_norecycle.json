@@ -1,15 +1,15 @@
 {
-  "task": "swinir_sr_classical_patch48_x2"     //  classical image sr for x2/x3/x4/x8. root/task/images-models-options
+  "task": "onlyattnir_kmeans_sr_lightweight_x2"     //  classical image sr for x2/x3/x4. root/task/images-models-options
   , "model": "plain" // "plain" | "plain2" if two inputs
-  , "gpu_ids": [0,1,2,3,4,5,6,7]
+  , "gpu_ids": [0,1,2,3]
   , "dist": true
 
-  , "scale": 2       // 2 | 3 | 4 | 8
+  , "scale": 2       // 2 | 3 | 4
   , "n_channels": 3  // broadcast to "datasets", 1 for grayscale, 3 for color
 
   , "path": {
     "root": "superresolution"            // "denoising" | "superresolution" | "dejpeg"
-    , "pretrained_netG": null      // path of pretrained model. We fine-tune X3/X4/X8 models from X2 model, so that `G_optimizer_lr` and `G_scheduler_milestones` can be halved to save time.
+    , "pretrained_netG": null      // path of pretrained model. We fine-tune X3/X4 models from X2 model, so that `G_optimizer_lr` and `G_scheduler_milestones` can be halved to save time.
     , "pretrained_netE": null      // path of pretrained model
   }
 
@@ -17,39 +17,35 @@
     "train": {
       "name": "train_dataset"           // just name
       , "dataset_type": "sr"         // "dncnn" | "dnpatch" | "fdncnn" | "ffdnet" | "sr" | "srmd" | "dpsr" | "plain" | "plainpatch" | "jpeg"
-      , "dataroot_H": "trainsets/trainH"// path of H training dataset. DIV2K (800 training images)
-      , "dataroot_L": "trainsets/trainL"              // path of L training dataset
 
-      , "H_size": 96                   // 96/144|192/384 | 128/192/256/512. LR patch size is set to 48 or 64 when compared with RCAN or RRDB.
+      , "H_size": 128                   // 128/192/256/512.
 
       , "dataloader_shuffle": true
       , "dataloader_num_workers": 16
-      , "dataloader_batch_size": 64      // batch size 1 | 16 | 32 | 48 | 64 | 128. Total batch size =4x8=32 in SwinIR
+      , "dataloader_batch_size": 64      // Total batch size =8x8=64 in SwinIR
     }
     , "test": {
       "name": "test_dataset"            // just name
       , "dataset_type": "sr"         // "dncnn" | "dnpatch" | "fdncnn" | "ffdnet" | "sr" | "srmd" | "dpsr" | "plain" | "plainpatch" | "jpeg"
-      , "dataroot_H": "testsets/Set5/HR"  // path of H testing dataset
-      , "dataroot_L": "testsets/Set5/LR_bicubic/X2"              // path of L testing dataset
 
     }
   }
 
   , "netG": {
-    "net_type": "block_kmeans" 
-    , "upscale": 2                      // 2 | 3  | 4 | 8
+    "net_type": "block_gumbel" 
+    , "upscale": 2                      // 2 | 3  | 4
     , "in_chans": 3 
-    , "img_size": 48                    // For fair comparison, LR patch size is set to 48 or 64 when compared with RCAN or RRDB.
-    , "window_size": 8 
-    , "num_groups": 16 
-    , "img_range": 1.0 
-    , "depths": [6, 6, 6, 6, 6, 6] 
-    , "blocks":["RPCTB","RTB","RPCTB","RTB","RPCTB","RTB"]
+    , "img_size": 64
+    , "window_size": 8
+    , "num_groups": 16
+    , "img_range": 1.0
+    , "depths": [6, 6, 6, 6]
+    , "blocks":["RPCTB","RTB","RPCTB","RTB"]
     , "keep_v": true
-    , "recycle": true
+    , "recycle": false
     , "shifted_window": true
-    , "embed_dim": 180 
-    , "num_heads": [6, 6, 6, 6, 6, 6]
+    , "embed_dim": 60 
+    , "num_heads": [6, 6, 6, 6]
     , "mlp_ratio": 2 
     , "upsampler": "pixelshuffledirect"        // "pixelshuffle" | "pixelshuffledirect" | "nearest+conv" | null
     , "resi_connection": "1conv"        // "1conv" | "3conv"

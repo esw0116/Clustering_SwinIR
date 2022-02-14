@@ -709,7 +709,11 @@ class BasicClusterLayer(nn.Module):
 
             if j == 0  or (not self.recycle):
                 # x_centers, labels = self.clustering.fit(x_windows, enable_gradient=True)
-                x_gumbels = self.gumbel_clustering(x_windows)
+                if j == 0:
+                    x_gumbels = self.gumbel_clustering(x_windows)
+                else:
+                    with torch.no_grad():
+                        x_gumbels = self.gumbel_clustering(x_windows)
                 if self.training:
                     x_gumbels = F.gumbel_softmax(x_gumbels, dim=-1, hard=True)
                 else:
