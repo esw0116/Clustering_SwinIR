@@ -816,7 +816,7 @@ class BasicClusterLayer(nn.Module):
                                 mlp_ratio=mlp_ratio,
                                 qkv_bias=qkv_bias, qk_scale=qk_scale,
                                 drop=drop, attn_drop=attn_drop,
-                                drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
+                                drop_path=drop_path[0] if isinstance(drop_path, list) else drop_path,
                                 norm_layer=norm_layer)]
         for i in range(depth-1):
             if shifted_window:
@@ -826,7 +826,7 @@ class BasicClusterLayer(nn.Module):
                                             mlp_ratio=mlp_ratio,
                                             qkv_bias=qkv_bias, qk_scale=qk_scale,
                                             drop=drop, attn_drop=attn_drop,
-                                            drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
+                                            drop_path=drop_path[i+1] if isinstance(drop_path, list) else drop_path,
                                             norm_layer=norm_layer))
             else:
                 mylist.append(SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
@@ -835,7 +835,7 @@ class BasicClusterLayer(nn.Module):
                                             mlp_ratio=mlp_ratio,
                                             qkv_bias=qkv_bias, qk_scale=qk_scale,
                                             drop=drop, attn_drop=attn_drop,
-                                            drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
+                                            drop_path=drop_path[i+1] if isinstance(drop_path, list) else drop_path,
                                             norm_layer=norm_layer))
 
         self.blocks = nn.ModuleList(mylist)
@@ -866,37 +866,37 @@ class BasicClusterLayer(nn.Module):
         H, W = x_size
         B, L, C = x.shape
         x = x.reshape(B,H,W,C)
-        x_windows = window_partition(x, self.window_size*2)  # nt*B, token_length, C
-        x_windows = x_windows.flatten(1,2)
-        b, l, c = x_windows.shape
         
         for j, blk in enumerate(self.blocks):
             timer_list = self.measure_time(msg=f'Block_{j}', timer_list=timer_list)
 
-            if j == 0  or (not self.recycle):
+            if j == 0:
+                x_windows = window_partition(x, self.window_size*2)  # nt*B, token_length, C
+                x_windows = x_windows.flatten(1,2)
+                b, l, c = x_windows.shape
                 x_centers, labels = self.clustering.fit(x_windows, enable_gradient=True)
                 label_ones = torch.ones_like(labels)
                 cnt_labels = torch.zeros(b, self.num_groups).type_as(labels)
                 cnt_labels.scatter_add_(dim=1, index=labels, src=label_ones)
                 
-            if self.use_checkpoint:
-                x_centers = checkpoint.checkpoint(blk, x_centers, x_size)
+                if self.use_checkpoint:
+                    x_centers = checkpoint.checkpoint(blk, x_centers, x_size)
+                else:
+                    x_windows = blk(x_centers, x_size, labels=labels, cnt_labels=cnt_labels, x_windows=x_windows)
+                if self.keep_v:
+                    x = window_reverse(x_windows, self.window_size*2, H, W)
+                else:
+                    x = x_centers.gather(
+                        dim=1,
+                        index=labels.view(*labels.size(), 1).repeat(1, 1, c),
+                    )
+                    x = window_reverse(x, self.window_size*2, H, W)
+                x = x.reshape(B,L,C)
+
             else:
-                x_windows = blk(x_centers, x_size, labels=labels, cnt_labels=cnt_labels, x_windows=x_windows)
-        
+                x = blk(x, x_size)
+
         timer_list = self.measure_time(msg='window_partition', timer_list=timer_list)
-
-        if self.keep_v:
-            x = window_reverse(x_windows, self.window_size*2, H, W)
-        else:
-            x = x_centers.gather(
-                dim=1,
-                index=labels.view(*labels.size(), 1).repeat(1, 1, c),
-            )
-            x = window_reverse(x, self.window_size*2, H, W)
-        
-        x = x.reshape(B,L,C)
-
         if imgsave_name is not None:
             my_labels = window_reverse(labels.view(-1, self.window_size*2, self.window_size*2, 1), self.window_size*2, H, W).squeeze(3).cpu().numpy()
             label_image_r = np.vectorize(self.color_r.get)(my_labels).astype('uint8')
