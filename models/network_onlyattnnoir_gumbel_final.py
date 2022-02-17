@@ -33,152 +33,37 @@ class PWD(nn.Module):
 
         return min_dists, min_labels
 
-class Clustering():
+def construct_centroid(
+        num_groups,
+        points_flat: torch.Tensor,
+        labels: torch.Tensor) -> torch.Tensor:
 
-    def __init__(
-            self,
-            k: int,
-            n_init: int=1,
-            max_iter: int=200) -> None:
-        '''
-            input arguments
-                n_init:
-                    number of different trials for k-means clustering
+    # batch size
+    b, n, n_feats = points_flat.size()
+    # b = labels.size(0)
 
-                max_iter:
-                    maximum iteration for k-means clustering
+    # (B x k, C)
+    points_flat = points_flat.view(b*n, n_feats)
+    centroids_flat = points_flat.new_zeros(b * num_groups, n_feats)
+    ones_flat = points_flat.new_ones(b*n).long()
 
-                symmetry:
-                    transform invariant clustering parameter
+    label_adder = num_groups * torch.arange(
+        b,
+        dtype=torch.long,
+        device=labels.device,
+    )
+    label_adder = label_adder.view(-1, 1)
 
-                    i           default k-means clustering
-                    ih          horizontal flip invariant clustering
-                    ihvo        flip invariant clustering
-                    ihvoIHVO    flip and rotation invariant clustering
+    # (B x N)
+    labels_flat = (labels + label_adder).view(-1)
+    centroids_flat.index_add_(0, labels_flat, points_flat)
 
-                cpu and n_GPUs:
-                    you can use multiple GPUs for k-means clustering
-        '''
+    counts_flat = labels_flat.new_zeros(b * num_groups)
+    counts_flat = counts_flat.index_add_(0, labels_flat, ones_flat)
 
-        self.k = k
-        self.n_init = n_init
-        self.max_iter = max_iter
-        return
-
-    def fit(
-            self,
-            points: torch.Tensor,
-            init_type: str='random',
-            enable_gradient: bool=False) -> typing.Tuple[torch.Tensor, torch.Tensor]:
-
-        '''
-        We assume that the input points are batched, e.g., (B, N, C)
-        
-        '''
-
-        best = 1e8
-        for _ in range(self.n_init):
-            centroids, labels, cost = self.cluster(points)
-
-            if cost < best:
-                self.cluster_centers_ = centroids.clone()
-                self.labels_ = labels.clone()
-                best = cost
-
-        # print('Best round: {}'.format(best_idx))
-        if enable_gradient:
-            points_flat = points.view(points.size(0) * points.size(1), -1)
-            self.cluster_centers_ = self.construct_centroid(
-                points_flat, self.labels_,
-            )
-
-        return self.cluster_centers_, self.labels_
-
-    def construct_centroid(
-            self,
-            points_flat: torch.Tensor,
-            labels: torch.Tensor) -> torch.Tensor:
-
-        # batch size
-        bn, n_feats = points_flat.size()
-        b = labels.size(0)
-
-        # (B x k, C)
-        centroids_flat = points_flat.new_zeros(b * self.k, n_feats)
-        ones_flat = points_flat.new_ones(bn).long()
-
-        label_adder = self.k * torch.arange(
-            b,
-            dtype=torch.long,
-            device=labels.device,
-        )
-        label_adder = label_adder.view(-1, 1)
-
-        # (B x N)
-        labels_flat = (labels + label_adder).view(-1)
-
-        centroids_flat.index_add_(0, labels_flat, points_flat)
-
-        counts_flat = labels_flat.new_zeros(b * self.k)
-        counts_flat = counts_flat.index_add_(0, labels_flat, ones_flat)
-
-        centroids_flat.div_(counts_flat.unsqueeze(-1) + 1e-8)
-        centroids = centroids_flat.view(b, self.k, n_feats)
-        return centroids
-
-    @torch.no_grad()
-    def cluster(self, points: torch.Tensor, log=False):
-        '''
-        We assume that the input points are batched, e.g., (B, N, C)
-        
-        '''
-        # (B, N, C)
-        b, n, n_feats = points.size()
-
-        # (B x N, C)
-        points_flat = points.view(b * n, n_feats)
-
-        # (B, N)
-        #labels = torch.LongTensor(b, n, device=points.device)
-        labels = torch.full((b, n), -1, dtype=torch.long, device=points.device)
-
-        ones = points.new_ones(b, n)
-
-        # (B, k)
-        init_seeds = ones.multinomial(self.k, replacement=False)
-        init_seeds_adder = n * torch.arange(
-            b,
-            dtype=torch.long,
-            device=init_seeds.device,
-        )
-        init_seeds_adder = init_seeds_adder.view(-1, 1)
-        init_seeds_flat = (init_seeds + init_seeds_adder).view(-1)
-        centroids_flat = points_flat[init_seeds_flat]
-
-        # (B, k, C)
-        centroids = centroids_flat.view(b, self.k, n_feats)
-
-        #centroids = points[init_seeds]
-        #print('centroids', centroids.size())
-        #print('points:', points.size())
-        #print('init_seeds:', init_seeds.size())
-
-        for i in range(self.max_iter):
-            # (B, N, k)
-            pwd = torch.cdist(points, centroids)
-
-            # (B, N) respectively
-            min_dists, min_labels = pwd.min(-1)
-            cost = min_dists.mean().item()
-            change = (min_labels != labels).sum().item()
-            if change == 0 and i > 0:
-                break
-
-            centroids = self.construct_centroid(points_flat, min_labels)
-            labels = min_labels
-
-        return centroids, labels, cost
-
+    centroids_flat.div_(counts_flat.unsqueeze(-1) + 1e-8)
+    centroids = centroids_flat.view(b, num_groups, n_feats)
+    return centroids
 
 class Mlp(nn.Module):
     def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
@@ -428,7 +313,7 @@ class ClusteredTransformerBlock(nn.Module):
         norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
     """
 
-    def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0, keep_v=False, num_groups=16,
+    def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0, keep_v=False, clustering=True, num_groups=16,
                  relative_bias=False, mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0., drop_path=0.,
                  act_layer=nn.GELU, norm_layer=nn.LayerNorm):
         super().__init__()
@@ -436,6 +321,7 @@ class ClusteredTransformerBlock(nn.Module):
         self.input_resolution = input_resolution
         self.num_heads = num_heads
         self.keep_v = keep_v
+        self.cluster_here = clustering
         self.relative_bias = relative_bias
         self.num_groups = num_groups
         self.window_size = window_size
@@ -457,12 +343,15 @@ class ClusteredTransformerBlock(nn.Module):
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
-        if self.shift_size > 0:
-            attn_mask = self.calculate_mask(self.input_resolution)
-        else:
-            attn_mask = None
+        if clustering:
+            self.gumbel_clustering = Mlp(in_features=dim, hidden_features=dim, out_features=self.num_groups)
+        
+        # if self.shift_size > 0:
+        #     attn_mask = self.calculate_mask(self.input_resolution)
+        # else:
+        #     attn_mask = None
 
-        self.register_buffer("attn_mask", attn_mask)
+        # self.register_buffer("attn_mask", attn_mask)
 
     def calculate_mask(self, x_size):
         # calculate attention mask for SW-MSA
@@ -487,30 +376,65 @@ class ClusteredTransformerBlock(nn.Module):
 
         return attn_mask
 
-    def forward(self, x, x_size, labels=None, cnt_labels=None, x_windows=None):
-        # H, W = x_size
-        # B, L, C = x.shape
+    def forward(self, x, x_size, x_centers=None, labels=None, cnt_labels=None):
+        H, W = x_size
+        B, L, C = x.shape
+        shortcut = x
 
-        if self.keep_v:
-            shortcut = x_windows
-        else:
-            shortcut = x
-        
         x = self.norm1(x)
 
-        # W-MSA/SW-MSA (to be compatible for testing on images whose shapes are the multiple of window size
+        x = x.reshape(B, H, W, C)
+        # # cyclic shift
+        if self.shift_size > 0:
+            shifted_x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
+        else:
+            shifted_x = x
 
-        # if self.input_resolution == x_size:
-        #     x = self.attn(x, mask=self.attn_mask, labels=labels, cnt_labels=cnt_labels, x_windows=x_windows)  # nW*B, window_size*window_size, C
-        # else:
-        #     x = self.attn(x, mask=self.calculate_mask(x_size).to(x.device), labels=labels, cnt_labels=cnt_labels, x_windows=x_windows)
-        x = self.attn(x, mask=None, labels=labels, cnt_labels=cnt_labels, x_windows=x_windows)  # nW*B, L, C
+        # partition windows
+        x_windows = window_partition(shifted_x, self.window_size)  # nW*B, window_size, window_size, C
+        x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
+        b = x_windows.shape[0]
+
+        if self.cluster_here:
+            assert x_centers is None
+            x_gumbels = self.gumbel_clustering(x_windows)
+            if self.training:
+                x_gumbels = F.gumbel_softmax(x_gumbels, dim=-1, hard=True)
+            else:
+                gumbel_index = x_gumbels.max(dim=-1, keepdim=True)[1]
+                x_gumbels = torch.zeros_like(x_windows).scatter_(-1, gumbel_index, 1.0)
+            _, labels = torch.max(x_gumbels, dim=-1)
+
+            x_centers = construct_centroid(self.num_groups, x_windows, labels)
+            label_ones = torch.ones_like(labels)
+            cnt_labels = torch.zeros(b, self.num_groups).type_as(labels)
+            cnt_labels.scatter_add_(dim=1, index=labels, src=label_ones)
+        else:
+            assert x_centers is not None
+
+        # # W-MSA/SW-MSA (to be compatible for testing on images whose shapes are the multiple of window size
+        # # if self.input_resolution == x_size:
+        # #     attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
+        # # else:
+        # #     attn_windows = self.attn(x_windows, mask=self.calculate_mask(x_size).to(x.device))
+        attn_windows = self.attn(x_centers, mask=None, labels=labels, cnt_labels=cnt_labels, x_windows=x_windows)  # nW*B, L, C
+
+        # # merge windows
+        attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
+        shifted_x = window_reverse(attn_windows, self.window_size, H, W)  # B H' W' C
+
+        # # reverse cyclic shift
+        if self.shift_size > 0:
+            x = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
+        else:
+            x = shifted_x
+        x = x.view(B, H * W, C)
 
         # FFN
         x = shortcut + self.drop_path(x)
         x = x + self.drop_path(self.mlp(self.norm2(x)))
 
-        return x
+        return x, x_centers, labels, cnt_labels
 
 
     def extra_repr(self) -> str:
@@ -522,6 +446,9 @@ class ClusteredTransformerBlock(nn.Module):
         H, W = self.input_resolution
         # norm1
         flops += self.dim * H * W
+        #gumbel softmax
+        if self.cluster_here:
+            flops += 2 * H * W * self.dim * self.dim
         # W-MSA/SW-MSA
         nW = H * W / self.window_size / self.window_size
         flops += nW * self.attn.flops(self.num_groups, self.window_size*self.window_size)
@@ -835,7 +762,6 @@ class BasicClusterLayer(nn.Module):
         self.recycle = recycle
         self.num_groups = num_groups
         self.shifted_window = shifted_window
-        self.clustering = Clustering(self.num_groups, n_init=1)
         
         self.color_r = {0: 0 , 1: 157, 2: 255, 3: 190, 4: 224, 5: 73, 6: 164, 7: 255, 8: 247, 9: 47, 10:  68, 11: 163, 12: 27, 13:   0, 14:  49, 15: 178}
         self.color_g = {0: 0 , 1: 157, 2: 255, 3:  38, 4: 111, 5: 60, 6: 100, 7: 137, 8: 226, 9: 72, 10: 137, 11: 206, 12: 38, 13:  87, 14: 162, 15: 220}
@@ -847,6 +773,7 @@ class BasicClusterLayer(nn.Module):
                 ClusteredTransformerBlock(dim=dim, input_resolution=input_resolution,
                                     num_heads=num_heads, window_size=window_size*2, 
                                     keep_v=keep_v,
+                                    clustering=True if (i <= 1 or (not self.recycle)) else False,
                                     relative_bias=relative_bias,
                                     num_groups=self.num_groups,
                                     shift_size=0 if (i % 2 == 0) else window_size,
@@ -862,6 +789,7 @@ class BasicClusterLayer(nn.Module):
                 ClusteredTransformerBlock(dim=dim, input_resolution=input_resolution,
                                     num_heads=num_heads, window_size=window_size*2, 
                                     keep_v=keep_v,
+                                    clustering=True if (i == 0 or (not self.recycle)) else False,
                                     relative_bias=relative_bias,
                                     num_groups=self.num_groups,
                                     shift_size=0,
@@ -898,47 +826,36 @@ class BasicClusterLayer(nn.Module):
 
         H, W = x_size
         B, L, C = x.shape
-        x = x.reshape(B,H,W,C)
-        x_windows = window_partition(x, self.window_size*2)  # nt*B, token_length, C
-        x_windows = x_windows.flatten(1,2)
-        b, l, c = x_windows.shape
-        if self.shifted_window:
-            x_shifted = torch.roll(x, shifts=(-self.window_size, -self.window_size), dims=(1, 2))
-            x_windows_shifted = window_partition(x_shifted, self.window_size*2)
-            x_windows_shifted = x_windows_shifted.flatten(1,2)
-        
-        x_centers, labels = self.clustering.fit(x_windows, enable_gradient=True)
-        label_ones = torch.ones_like(labels)
-        cnt_labels = torch.zeros(b, self.num_groups).type_as(labels)
-        cnt_labels.scatter_add_(dim=1, index=labels, src=label_ones)
-        if self.shifted_window:
-            x_centers_shifted, labels_shifted = self.clustering.fit(x_windows_shifted, enable_gradient=True)
-            label_ones = torch.ones_like(labels_shifted)
-            cnt_labels_shifted = torch.zeros(b, self.num_groups).type_as(labels_shifted)
-            cnt_labels_shifted.scatter_add_(dim=1, index=labels_shifted, src=label_ones)
 
-        for j, blk in enumerate(self.blocks):
-            timer_list = self.measure_time(msg=f'Block_{j}', timer_list=timer_list)
-            if self.use_checkpoint:
-                x_centers = checkpoint.checkpoint(blk, x_centers, x_size)
-            else:
-                if self.shifted_window:
-                    x_windows = blk(x_centers, x_size, labels=labels, cnt_labels=cnt_labels, x_windows=x_windows) if j%2==0 else blk(x_centers_shifted, x_size, labels=labels_shifted, cnt_labels=cnt_labels_shifted, x_windows=x_windows)
+        if self.recycle:
+            for j, blk in enumerate(self.blocks):
+                timer_list = self.measure_time(msg=f'Block_{j}', timer_list=timer_list)
+                if self.use_checkpoint:
+                    x_centers = checkpoint.checkpoint(blk, x_centers, x_size)
                 else:
-                    x_windows = blk(x_centers, x_size, labels=labels, cnt_labels=cnt_labels, x_windows=x_windows)
-        
-        timer_list = self.measure_time(msg='window_partition', timer_list=timer_list)
+                    if self.shifted_window:
+                        if j == 0:
+                            x, x_centers1, labels1, cnt_labels1 = blk(x, x_size)
+                        elif j == 1:
+                            x, x_centers2, labels2, cnt_labels2 = blk(x, x_size)
+                        elif j % 2 == 0:
+                            x, _, _, _ = blk(x, x_size, x_centers=x_centers1, labels=labels1, cnt_labels=cnt_labels1)
+                        else:
+                            x, _, _, _ = blk(x, x_size, x_centers=x_centers2, labels=labels2, cnt_labels=cnt_labels2)
 
-        if self.keep_v:
-            x = window_reverse(x_windows, self.window_size*2, H, W)
+                    else:
+                        if j == 0:
+                            x, x_centers, labels, cnt_labels = blk(x, x_size)
+                        else:
+                            x, _, _, _ = blk(x, x_size, x_centers=x_centers, labels=labels, cnt_labels=cnt_labels)
         else:
-            x = x_centers.gather(
-                dim=1,
-                index=labels.view(*labels.size(), 1).repeat(1, 1, c),
-            )
-            x = window_reverse(x, self.window_size*2, H, W)
-        
-        x = x.reshape(B,L,C)
+            for j, blk in enumerate(self.blocks):
+                timer_list = self.measure_time(msg=f'Block_{j}', timer_list=timer_list)
+                if self.use_checkpoint:
+                    x_centers = checkpoint.checkpoint(blk, x_centers, x_size)
+                else:
+                    x, _, _, _ = blk(x, x_size)
+        timer_list = self.measure_time(msg='window_partition', timer_list=timer_list)
 
         if imgsave_name is not None:
             my_labels = window_reverse(labels.view(-1, self.window_size*2, self.window_size*2, 1), self.window_size*2, H, W).squeeze(3).cpu().numpy()
@@ -1285,7 +1202,7 @@ class SwinIR(nn.Module):
 
     def __init__(self, img_size=64, patch_size=1, in_chans=3,
                  embed_dim=96, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6], blocks=['RPCTB','RTB', 'RPCTB','RTB'], num_groups=16, 
-                 window_size=7, relative_bias=False, mlp_ratio=4., shifted_window=False, keep_v=False, recycle=True, qkv_bias=True, qk_scale=None,
+                 window_size=7, relative_bias=False, mlp_ratio=4., shifted_window='No', keep_v=False, recycle=True, qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1, norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
                  use_checkpoint=False, upscale=2, img_range=1., upsampler='pixelshuffledirect', resi_connection='1conv'
                  ):
@@ -1359,7 +1276,7 @@ class SwinIR(nn.Module):
                          num_groups=num_groups,
                          relative_bias=relative_bias,
                          mlp_ratio=self.mlp_ratio,
-                         shifted_window=shifted_window,
+                         shifted_window=True if shifted_window=='Full' else False,
                          qkv_bias=qkv_bias, qk_scale=qk_scale,
                          drop=drop_rate, attn_drop=attn_drop_rate,
                          drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],  # no impact on SR results
@@ -1378,7 +1295,7 @@ class SwinIR(nn.Module):
                          num_heads=num_heads[i_layer],
                          window_size=window_size,
                          mlp_ratio=self.mlp_ratio,
-                         shifted_window=shifted_window,
+                         shifted_window=False if shifted_window=='No' else True,
                          qkv_bias=qkv_bias, qk_scale=qk_scale,
                          drop=drop_rate, attn_drop=attn_drop_rate,
                          drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],  # no impact on SR results
