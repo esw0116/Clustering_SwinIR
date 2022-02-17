@@ -6,6 +6,7 @@ from collections import OrderedDict
 import os
 import torch
 import requests
+import math
 
 from utils import utils_image as util
 
@@ -61,10 +62,11 @@ def main():
         with torch.no_grad():
             # pad input image to be a multiple of window_size
             _, _, h_old, w_old = img_lq.size()
-            h_pad = (h_old // window_size + 1) * window_size - h_old
-            w_pad = (w_old // window_size + 1) * window_size - w_old
+            h_pad = math.ceil(h_old / (2*window_size)) * 2*window_size - h_old
+            w_pad = math.ceil(w_old / (2*window_size)) * 2*window_size - w_old
             img_lq = torch.cat([img_lq, torch.flip(img_lq, [2])], 2)[:, :, :h_old + h_pad, :]
             img_lq = torch.cat([img_lq, torch.flip(img_lq, [3])], 3)[:, :, :, :w_old + w_pad]
+            # print(h_pad, w_pad, img_lq.shape)
             # output = test(img_lq, model, args, window_size, imgname=f'{save_dir}/{imgname}')
             output = test(img_lq, model, args, window_size)
             output = output[..., :h_old * args.scale, :w_old * args.scale]
@@ -109,7 +111,9 @@ def main():
     if img_gt is not None:
         ave_psnr = sum(test_results['psnr']) / len(test_results['psnr'])
         ave_ssim = sum(test_results['ssim']) / len(test_results['ssim'])
-        print('\n{} \n-- Flops: {} \n-- Average PSNR/SSIM(RGB): {:.2f} dB; {:.4f}'.format(save_dir, model.flops(), ave_psnr, ave_ssim))
+        print('\n{} \n-- Params number: {} \n-- Flops: {} \n-- Average PSNR/SSIM(RGB): {:.2f} dB; {:.4f}'.format(
+            save_dir, sum(map(lambda x: x.numel(), model.parameters())), model.flops(), ave_psnr, ave_ssim))
+
         if img_gt.ndim == 3:
             ave_psnr_y = sum(test_results['psnr_y']) / len(test_results['psnr_y'])
             ave_ssim_y = sum(test_results['ssim_y']) / len(test_results['ssim_y'])
@@ -171,40 +175,50 @@ def define_model(args):
         param_key_g = 'params'
 
     elif args.task in ['kmeans_sr', 'kmeans_post_sr', 'kmeans_postkeepv_sr', 'kmeans_postkeepvnorecycle_sr', 'kmeans_last_sr', 'kmeans_postkeepv_bias_sr',
-                        'kmeans_tooshort_sr', 'kmeans_tooshortkeepv_sr']:
-        from models.network_onlyattnnoir_kmeans_blocks import SwinIR as net
-        
+                        'kmeans_tooshort_sr', 'kmeans_tooshortkeepv_sr', 'kmeans_postkeepv_ws_sr', 
+                        'gumbel_postkeepv_ws_sr', 'gumbel_postkeepvnorecycle_ws_sr', 'gumbel_postkeepv_sr', 'iic_postkeepv_ws_sr']:
+        if args.task.startswith('kmeans'):
+            from models.network_onlyattnnoir_kmeans_blocks import SwinIR as net
+        elif args.task.startswith('gumbel'):
+            from models.network_onlyattnnoir_gumbel_blocks import SwinIR as net
+        elif args.task.startswith('iic'):
+            from models.network_onlyattnnoir_iic_blocks import SwinIR as net
         depth = [6,6,6,6]
         head = [6,6,6,6]
-        if args.task == 'kmeans_sr':
-            block = ['RTB','RPCTB','RTB','RPCTB']
-        elif args.task == 'kmeans_last_sr':
+        if 'post' in args.task:
+            block = ['RPCTB','RTB','RPCTB','RTB']
+        elif 'last' in args.task:
             block=['RPCTB','RPCTB','RPCTB','RTB']
-        elif args.task == 'kmeans_tooshort_sr' or args.task == 'kmeans_tooshortkeepv_sr':
+        elif 'tooshort' in args.task:
             block=['RPCTB','RPCTB']
             depth = [6,6]
             head = [6,6]
         else:
-            block=['RPCTB','RTB','RPCTB','RTB']
+            block=['RTB','RPCTB','RTB','RPCTB']
             
         if 'keepv' in args.task:
             keepv = True
         else:
             keepv = False
+        
+        if '_ws' in args.task:
+            shift_window = True
+        else:
+            shift_window = False
 
-        if args.task == 'kmeans_postkeepvnorecycle_sr':
+        if 'norecycle' in args.task:
             recycle = False
         else:
             recycle = True
         
-        if args.task == 'kmeans_postkeep_bias_sr':
+        if '_bias' in args.task:
             relative_bias = True
         else:
             relative_bias = False
 
         model = net(upscale=args.scale, img_size=64, in_chans=3, window_size=8,
                  img_range=1., embed_dim=60, depths=depth, num_heads=head,
-                 blocks=block, num_groups=16, keep_v=keepv, recycle=recycle, relative_bias=relative_bias,
+                 blocks=block, num_groups=16, keep_v=keepv, recycle=recycle, relative_bias=relative_bias, shifted_window=shift_window,
                  mlp_ratio=2., upsampler='pixelshuffledirect', resi_connection='1conv')
         param_key_g = 'params'
     
@@ -254,7 +268,7 @@ def define_model(args):
         param_key_g = 'params'
 
     pretrained_model = torch.load(args.model_path)
-    model.load_state_dict(pretrained_model[param_key_g] if param_key_g in pretrained_model.keys() else pretrained_model, strict=True)
+    model.load_state_dict(pretrained_model[param_key_g] if param_key_g in pretrained_model.keys() else pretrained_model, strict=False)
     return model
 
 
