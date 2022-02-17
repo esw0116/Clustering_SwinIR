@@ -448,7 +448,7 @@ class ClusteredTransformerBlock(nn.Module):
         flops += self.dim * H * W
         #gumbel softmax
         if self.cluster_here:
-            flops += 2 * H * W * self.dim * self.dim
+            flops += H * W * self.dim * (self.dim + self.num_groups)
         # W-MSA/SW-MSA
         nW = H * W / self.window_size / self.window_size
         flops += nW * self.attn.flops(self.num_groups, self.window_size*self.window_size)
