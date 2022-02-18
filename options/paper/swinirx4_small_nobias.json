@@ -33,7 +33,7 @@
 
   , "netG": {
     "net_type": "onlyattnir" 
-    , "upscale": 2                      // 2 | 3  | 4
+    , "upscale": 4                      // 2 | 3  | 4
     , "in_chans": 3 
     , "img_size": 64
     , "window_size": 8  
@@ -67,7 +67,7 @@
     , "G_regularizer_orthstep": null    // unused
     , "G_regularizer_clipstep": null    // unused
 
-    , "G_param_strict": true
+    , "G_param_strict": false
     , "E_param_strict": true
 
     , "checkpoint_test": 2500           // for testing
