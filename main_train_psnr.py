@@ -124,7 +124,8 @@ def main(json_path='options/train_msrresnet_psnr.json', use_nsml=True):
             if opt['rank'] == 0:
                 logger.info('Number of train images: {:,d}, iters: {:,d}'.format(len(train_set), train_size))
             if opt['dist']:
-                train_sampler = DistributedSampler(train_set, shuffle=dataset_opt['dataloader_shuffle'], drop_last=True, seed=seed)
+                # train_sampler = DistributedSampler(train_set, shuffle=dataset_opt['dataloader_shuffle'], drop_last=True, seed=seed)
+                train_sampler = DistributedSampler(train_set, shuffle=dataset_opt['dataloader_shuffle'], seed=seed)
                 train_loader = DataLoader(train_set,
                                           batch_size=dataset_opt['dataloader_batch_size']//opt['num_gpu'],
                                           shuffle=False,
