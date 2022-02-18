@@ -1,0 +1,1 @@
+nsml run -d CVLAB_SR -g 4 --shm-size "4G" -e execute_main.py -a "--conf '--opt options/paper/train_small_kmeans_full_yes.json --dist True'" --gpu-driver-version 396.37 -c 16
