@@ -71,7 +71,8 @@
     , "E_param_strict": true
 
     , "checkpoint_test": 2500           // for testing
-    , "checkpoint_save": 2500           // for saving model
-    , "checkpoint_print": 100           // for print
+    , "checkpoint_save": 5000           // for saving model
+    , "checkpoint_print": 250           // for print
+    , "total_iters": 250000             // total iterations for training
   }
 }
