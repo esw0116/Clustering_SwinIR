@@ -749,7 +749,7 @@ class BasicClusterLayer(nn.Module):
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size, keep_v=False, recycle=True, num_groups=16,
                  relative_bias=False, mlp_ratio=4., shifted_window=False, qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
-                 drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False):
+                 drop_path=0., groupwindow_ratio=2, norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False):
 
         super().__init__()
         self.dim = dim
@@ -762,6 +762,7 @@ class BasicClusterLayer(nn.Module):
         self.recycle = recycle
         self.num_groups = num_groups
         self.shifted_window = shifted_window
+        self.groupwindow_ratio = groupwindow_ratio
         
         self.color_r = {0: 0 , 1: 157, 2: 255, 3: 190, 4: 224, 5: 73, 6: 164, 7: 255, 8: 247, 9: 47, 10:  68, 11: 163, 12: 27, 13:   0, 14:  49, 15: 178}
         self.color_g = {0: 0 , 1: 157, 2: 255, 3:  38, 4: 111, 5: 60, 6: 100, 7: 137, 8: 226, 9: 72, 10: 137, 11: 206, 12: 38, 13:  87, 14: 162, 15: 220}
@@ -771,7 +772,7 @@ class BasicClusterLayer(nn.Module):
         if shifted_window:
             self.blocks = nn.ModuleList([
                 ClusteredTransformerBlock(dim=dim, input_resolution=input_resolution,
-                                    num_heads=num_heads, window_size=window_size*2, 
+                                    num_heads=num_heads, window_size=int(window_size*groupwindow_ratio), 
                                     keep_v=keep_v,
                                     clustering=True if (i <= 1 or (not self.recycle)) else False,
                                     relative_bias=relative_bias,
@@ -787,7 +788,7 @@ class BasicClusterLayer(nn.Module):
         else:
             self.blocks = nn.ModuleList([
                 ClusteredTransformerBlock(dim=dim, input_resolution=input_resolution,
-                                    num_heads=num_heads, window_size=window_size*2, 
+                                    num_heads=num_heads, window_size=int(window_size*groupwindow_ratio), 
                                     keep_v=keep_v,
                                     clustering=True if (i == 0 or (not self.recycle)) else False,
                                     relative_bias=relative_bias,
@@ -858,7 +859,7 @@ class BasicClusterLayer(nn.Module):
         timer_list = self.measure_time(msg='window_partition', timer_list=timer_list)
 
         if imgsave_name is not None:
-            my_labels = window_reverse(labels.view(-1, self.window_size*2, self.window_size*2, 1), self.window_size*2, H, W).squeeze(3).cpu().numpy()
+            my_labels = window_reverse(labels.view(-1, int(self.window_size*self.groupwindow_ratio), int(self.window_size*self.groupwindow_ratio), 1), int(self.window_size*self.groupwindow_ratio), H, W).squeeze(3).cpu().numpy()
             label_image_r = np.vectorize(self.color_r.get)(my_labels).astype('uint8')
             label_image_g = np.vectorize(self.color_g.get)(my_labels).astype('uint8')
             label_image_b = np.vectorize(self.color_b.get)(my_labels).astype('uint8')
@@ -992,7 +993,7 @@ class RPCTB(nn.Module):
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size, keep_v=False, recycle=True, num_groups=16,
                  relative_bias=False, mlp_ratio=4., shifted_window=False, qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
-                 drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False,
+                 drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False, groupwindow_ratio=2,
                  img_size=224, patch_size=4, resi_connection='1conv'):
         super(RPCTB, self).__init__()
 
@@ -1014,6 +1015,7 @@ class RPCTB(nn.Module):
                                          drop=drop, attn_drop=attn_drop,
                                          drop_path=drop_path,
                                          norm_layer=norm_layer,
+                                         groupwindow_ratio=groupwindow_ratio,
                                          downsample=downsample,
                                          use_checkpoint=use_checkpoint,
                                          )
@@ -1204,7 +1206,7 @@ class SwinIR(nn.Module):
                  embed_dim=96, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6], blocks=['RPCTB','RTB', 'RPCTB','RTB'], num_groups=16, 
                  window_size=7, relative_bias=False, mlp_ratio=4., shifted_window='No', keep_v=False, recycle=True, qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1, norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
-                 use_checkpoint=False, upscale=2, img_range=1., upsampler='pixelshuffledirect', resi_connection='1conv'
+                 use_checkpoint=False, groupwindow_ratio=2, upscale=2, img_range=1., upsampler='pixelshuffledirect', resi_connection='1conv'
                  ):
         super(SwinIR, self).__init__()
         num_in_ch = in_chans
@@ -1219,6 +1221,7 @@ class SwinIR(nn.Module):
         self.upscale = upscale
         self.upsampler = upsampler
         self.window_size = window_size
+        self.groupwindow_ratio = groupwindow_ratio
         
         #####################################################################################################
         ################################### 1, shallow feature extraction ###################################
@@ -1281,6 +1284,7 @@ class SwinIR(nn.Module):
                          drop=drop_rate, attn_drop=attn_drop_rate,
                          drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],  # no impact on SR results
                          norm_layer=norm_layer,
+                         groupwindow_ratio=groupwindow_ratio,
                          downsample=None,
                          use_checkpoint=use_checkpoint,
                          img_size=img_size,
@@ -1370,8 +1374,8 @@ class SwinIR(nn.Module):
 
     def check_image_size(self, x):
         _, _, h, w = x.size()
-        mod_pad_h = (self.window_size*2 - h % (self.window_size*2)) % (self.window_size*2)
-        mod_pad_w = (self.window_size*2 - w % (self.window_size*2)) % (self.window_size*2)
+        mod_pad_h = (int(self.window_size*self.groupwindow_ratio) - h % int(self.window_size*self.groupwindow_ratio)) % int(self.window_size*self.groupwindow_ratio)
+        mod_pad_w = (int(self.window_size*self.groupwindow_ratio) - w % int(self.window_size*self.groupwindow_ratio)) % int(self.window_size*self.groupwindow_ratio)
         x = F.pad(x, (0, mod_pad_w, 0, mod_pad_h), 'reflect')
         return x
 
