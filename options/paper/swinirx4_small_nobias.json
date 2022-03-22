@@ -4,7 +4,7 @@
   , "gpu_ids": [0,1,2,3] //[0,1,2,3]
   , "dist": true //true
 
-  , "scale": 3       // 2 | 3 | 4
+  , "scale": 4       // 2 | 3 | 4
   , "n_channels": 3  // broadcast to "datasets", 1 for grayscale, 3 for color
 
   , "path": {
@@ -33,7 +33,7 @@
 
   , "netG": {
     "net_type": "onlyattnir" 
-    , "upscale": 3                      // 2 | 3  | 4
+    , "upscale": 4                      // 2 | 3  | 4
     , "in_chans": 3 
     , "img_size": 64
     , "window_size": 8  
