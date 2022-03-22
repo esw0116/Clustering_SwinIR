@@ -1,12 +1,11 @@
 import argparse
 import cv2
-import glob
+import os, glob
 import numpy as np
 from collections import OrderedDict
-import os
 import torch
-import requests
-import math
+import math, time
+from thop import profile, clever_format
 
 from utils import utils_image as util
 
@@ -15,16 +14,19 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--task', type=str, default='color_dn', help='swin_sr, real_sr')
     parser.add_argument('--scale', type=int, default=2, help='scale factor: 1, 2, 3, 4, 8')
-    parser.add_argument('--model_path', type=str,
-                        default='model_zoo/swinir/001_classicalSR_DIV2K_s48w8_SwinIR-M_x2.pth')
+    parser.add_argument('--model_path', type=str)
     parser.add_argument('--benchmark', type=str, default=None, help='input low-quality test image folder')
     parser.add_argument('--folder_lq', type=str, default=None, help='input low-quality test image folder')
     parser.add_argument('--folder_gt', type=str, default=None, help='input ground-truth test image folder')
     parser.add_argument('--tile', type=int, default=None, help='Tile size, None for no tile during testing (testing as a whole)')
     parser.add_argument('--tile_overlap', type=int, default=32, help='Overlapping of different tiles')
+    parser.add_argument('--bs', type=int, default=1, help='batch size')
+    parser.add_argument('--cpu', action='store_true')
+    parser.add_argument('--time', action='store_true')
     args = parser.parse_args()
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # device = torch.device('cuda' if torch.cuda.is_available()  else 'cpu')
+    device = torch.device('cuda' if not args.cpu  else 'cpu')
     
     model = define_model(args)
     model.eval()
@@ -33,10 +35,19 @@ def main():
     if args.benchmark == 'Set5':
         args.folder_lq = 'dataset/benchmark/Set5/LR_bicubic/X{}'.format(args.scale)
         args.folder_gt = 'dataset/benchmark/Set5/HR'
+    if args.benchmark == 'Set14':
+        args.folder_lq = 'dataset/benchmark/Set14/LR_bicubic/X{}'.format(args.scale)
+        args.folder_gt = 'dataset/benchmark/Set14/HR'
+    if args.benchmark == 'B100':
+        args.folder_lq = 'dataset/benchmark/B100/LR_bicubic/X{}'.format(args.scale)
+        args.folder_gt = 'dataset/benchmark/B100/HR'
     elif args.benchmark == 'Urban100':
         args.folder_lq = 'dataset/benchmark/Urban100/LR_bicubic/X{}'.format(args.scale)
         args.folder_gt = 'dataset/benchmark/Urban100/HR'
-    
+    elif args.benchmark == 'div2k':
+        args.folder_lq = 'dataset/DIV2K/DIV2K_valid_LR_bicubic/X{}'.format(args.scale)
+        args.folder_gt = 'dataset/DIV2K/DIV2K_valid_HR'
+
     # setup folder and path
     folder, save_dir, border, window_size = setup(args)
     os.makedirs(save_dir, exist_ok=True)
@@ -48,16 +59,16 @@ def main():
     test_results['latency'] = []
     psnr, ssim, psnr_y, ssim_y, latency = 0, 0, 0, 0, 0
 
+    if not args.cpu:
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
     for idx, path in enumerate(sorted(glob.glob(os.path.join(folder, '*')))):
         # read image
         imgname, img_lq, img_gt = get_image_pair(args, path)  # image to HWC-BGR, float32
         img_lq = np.transpose(img_lq if img_lq.shape[2] == 1 else img_lq[:, :, [2, 1, 0]], (2, 0, 1))  # HCW-BGR to CHW-RGB
         img_lq = torch.from_numpy(img_lq).float().unsqueeze(0).to(device)  # CHW-RGB to NCHW-RGB
-
-        torch.cuda.synchronize()
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True)
-        start.record()
+        if args.bs > 1:
+            img_lq = img_lq.expand((args.bs, -1, -1, -1))
         # inference
         with torch.no_grad():
             # pad input image to be a multiple of window_size
@@ -66,20 +77,42 @@ def main():
             w_pad = math.ceil(w_old / (2*window_size)) * 2*window_size - w_old
             img_lq = torch.cat([img_lq, torch.flip(img_lq, [2])], 2)[:, :, :h_old + h_pad, :]
             img_lq = torch.cat([img_lq, torch.flip(img_lq, [3])], 3)[:, :, :, :w_old + w_pad]
-            # print(h_pad, w_pad, img_lq.shape)
             # output = test(img_lq, model, args, window_size, imgname=f'{save_dir}/{imgname}')
-            output = test(img_lq, model, args, window_size)
+            if args.benchmark == 'div2k':
+                if args.scale == 2:
+                    img_lq = img_lq[..., :368, :640]
+                elif args.scale == 3:
+                    img_lq = img_lq[..., :240, :416]
+                elif args.scale == 4:
+                    img_lq = img_lq[..., :192, :320]
+            
+            if args.cpu:
+                start = time.time()
+            else:
+                start.record()
+            output = test(img_lq, model, args, window_size, detail_time=args.time)
+            if args.cpu:
+                end = time.time()
+                runtime = (end - start) * 1000
+            else:
+                end.record()
+                torch.cuda.synchronize()
+                runtime = start.elapsed_time(end)
+
+            if args.benchmark == 'div2k' and idx == 0:
+                macs, params = profile(model, inputs=(img_lq, ))
+                macs, params = clever_format([macs, params], "%.3f")
+                print(params, macs)
             output = output[..., :h_old * args.scale, :w_old * args.scale]
-        end.record()
-        torch.cuda.synchronize()
-        runtime = start.elapsed_time(end)
-        test_results['latency'].append(runtime)
+            test_results['latency'].append(runtime)
+        
         # save image
+        output = output[0:1]
         output = output.data.squeeze().float().cpu().clamp_(0, 1).numpy()
         if output.ndim == 3:
             output = np.transpose(output[[2, 1, 0], :, :], (1, 2, 0))  # CHW-RGB to HCW-BGR
         output = (output * 255.0).round().astype(np.uint8)  # float32 to uint8
-        cv2.imwrite(f'{save_dir}/{imgname}_SwinIR.png', output)
+        # cv2.imwrite(f'{save_dir}/{imgname}_SwinIR.png', output)
 
         # evaluate psnr/ssim/psnr_b
         if img_gt is not None:
@@ -87,7 +120,7 @@ def main():
             img_gt = img_gt[:h_old * args.scale, :w_old * args.scale, ...]  # crop gt
             img_gt = np.squeeze(img_gt)
             # print(img_gt.shape, output.shape)
-            psnr = util.calculate_psnr(output, img_gt, border=border, y_psnr=False)
+            psnr = 0  # util.calculate_psnr(output, img_gt, border=border, y_psnr=False)
             ssim = 0
             # ssim = util.calculate_ssim(output, img_gt, border=border)
             test_results['psnr'].append(psnr)
@@ -95,9 +128,13 @@ def main():
             if img_gt.ndim == 3:  # RGB image
                 output_y = util.bgr2ycbcr(output.astype(np.float32) / 255.) * 255.
                 img_gt_y = util.bgr2ycbcr(img_gt.astype(np.float32) / 255.) * 255.
-                psnr_y = util.calculate_psnr(output_y, img_gt_y, border=border, y_psnr=False)
-                ssim_y = 0
-                # ssim_y = util.calculate_ssim(output_y, img_gt_y, border=border)
+                if args.benchmark == 'div2k':
+                    psnr_y = 0 #util.calculate_psnr(output_y, img_gt_y, border=border, y_psnr=False)
+                    ssim_y = 0
+                else:
+                    psnr_y = util.calculate_psnr(output_y, img_gt_y, border=border, y_psnr=False)
+                    ssim_y = util.calculate_ssim_pth(output_y, img_gt_y, border=border)
+
                 test_results['psnr_y'].append(psnr_y)
                 test_results['ssim_y'].append(ssim_y)
             # print('Testing {:d} {:20s} - PSNR: {:.2f} dB; SSIM: {:.4f}; '
@@ -222,6 +259,46 @@ def define_model(args):
                  mlp_ratio=2., upsampler='pixelshuffledirect', resi_connection='1conv')
         param_key_g = 'params'
     
+    elif args.task in ['kmeans_final_small_yes', 'kmeans_final_small_no', 'kmeans_final_big_yes', 'kmeans_final_big_no',
+                        'gumbel_final_small_yes', 'gumbel_final_small_no', 'gumbel_final_big_yes', 'gumbel_final_big_no',]:
+        if args.task.startswith('kmeans'):
+            from models.network_onlyattnnoir_kmeans_final import SwinIR as net
+        elif args.task.startswith('gumbel'):
+            from models.network_onlyattnnoir_gumbel_final import SwinIR as net
+
+
+        if 'small' in args.task:
+            block = ['RPCTB','RTB','RPCTB','RTB']
+            depth = [6,6,6,6]
+            head = [6,6,6,6]
+            embed_dim = 60
+        elif 'big' in args.task:
+            block = ['RPCTB','RPCTB','RTB','RPCTB','RPCTB','RTB']
+            depth = [6,6,6,6,6,6]
+            head = [6,6,6,6,6,6]
+            embed_dim = 180
+        else:
+            block=['RTB','RPCTB','RTB','RPCTB']
+            
+        keepv = True
+        shift_window = 'Half'
+
+        if args.task.endswith('no'):
+            recycle = False
+        else:
+            recycle = True
+        
+        if '_bias' in args.task:
+            relative_bias = True
+        else:
+            relative_bias = False
+
+        model = net(upscale=args.scale, img_size=64, in_chans=3, window_size=8,
+                 img_range=1., embed_dim=embed_dim, depths=depth, num_heads=head,
+                 blocks=block, num_groups=8, keep_v=keepv, recycle=recycle, relative_bias=relative_bias, shifted_window=shift_window,
+                 mlp_ratio=2., upsampler='pixelshuffledirect', resi_connection='1conv')
+        param_key_g = 'params'
+
     elif args.task == 'kmeans_normpost_sr':
         from models.network_onlyattnnoir_kmeans_normblocks import SwinIR as net
         model = net(upscale=args.scale, img_size=64, in_chans=3, window_size=8,
@@ -254,23 +331,30 @@ def define_model(args):
         param_key_g = 'params'
     
     elif args.task == 'random_noswin_sr':
-        from models.network_onlyattnnoir_random_blocks import SwinIR as net
+        from models.backup.network_onlyattnnoir_random_blocks import SwinIR as net
         model = net(upscale=args.scale, in_chans=3, img_size=64, window_size=8,
                     img_range=1., depths=[6, 6, 6, 6], embed_dim=60, num_heads=[6, 6, 6, 6],
                     mlp_ratio=2, upsampler='pixelshuffledirect', resi_connection='1conv')
         param_key_g = 'params'
 
     elif args.task == 'randomfix_noswin_sr':
-        from models.network_onlyattnnoir_randomfix_blocks import SwinIR as net
+        from models.backup.network_onlyattnnoir_randomfix_blocks import SwinIR as net
         model = net(upscale=args.scale, in_chans=3, img_size=64, window_size=8,
                     img_range=1., depths=[6, 6, 6, 6], embed_dim=60, num_heads=[6, 6, 6, 6],
                     mlp_ratio=2, upsampler='pixelshuffledirect', resi_connection='1conv')
         param_key_g = 'params'
 
     pretrained_model = torch.load(args.model_path)
-    model.load_state_dict(pretrained_model[param_key_g] if param_key_g in pretrained_model.keys() else pretrained_model, strict=False)
-    return model
+    model_params = pretrained_model[param_key_g] if param_key_g in pretrained_model.keys() else pretrained_model
+    valid_model_params = {}
+    for k, v in model_params.items():
+        if k.endswith('attn_mask'):
+            pass
+        else:
+            valid_model_params[k] = v
 
+    model.load_state_dict(valid_model_params, strict=False)
+    return model
 
 
 def setup(args):
@@ -279,8 +363,8 @@ def setup(args):
     hr = os.path.basename(os.path.dirname(args.folder_gt))
     save_dir = f'results/{hr}/{args.task}_X{args.scale}'
     folder = args.folder_gt
-    # border = args.scale
-    border = 0
+    border = args.scale
+    # border = 0
     window_size = 8
 
     return folder, save_dir, border, window_size
@@ -298,11 +382,11 @@ def get_image_pair(args, path):
     return imgname, img_lq, img_gt
 
 
-def test(img_lq, model, args, window_size, imgname=None):
+def test(img_lq, model, args, window_size, imgname=None, detail_time=True):
     if args.tile is None:
         # test the image as a whole
         if imgname is None:
-            output = model(img_lq)
+            output = model(img_lq, print_time=detail_time)
         else:
             output = model(img_lq, imgsave_name=imgname)
     else:
