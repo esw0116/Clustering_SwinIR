@@ -5,6 +5,29 @@
 
 *[Computer Vision Lab](https://vision.ee.ethz.ch/the-institute.html), ETH Zurich, Switzerland*
 
+
+
+### Measure test result / time of ICASR and SwinIR
+Download Pretrained models
+- SwinIR: https://drive.google.com/drive/folders/12UrZAg06T7l_ElqLYAtzKGc7b81Ldh-_?usp=sharing
+- ICASR(Ours): https://drive.google.com/drive/folders/1Cf3wExjvVtA_bIktI8RU3C8eGfEYgUoy?usp=sharing
+
+
+Don't need to download pretrained models if not measuring PSNR, SSIM
+
+Change dataset path in 'main_test_clustertransformer.py' (Line 35-49)
+
+Comment Line 347-356 if loading pretrained model is unnecessary.
+
+Move to file 'clustertest.sh'
+- Use Line 35 to test SwinIR
+- Use Line 51 to test ICASR
+
+add '--bs ' for increasing batch size, '--cpu' for cpu testing
+
+
+
+
 _______
 - **_News (2021-09-09)_**: Add [main_download_pretrained_models.py](https://github.com/cszn/KAIR/blob/master/main_download_pretrained_models.py) to download pre-trained models.
 - **_News (2021-09-08)_**: Add [matlab code](https://github.com/cszn/KAIR/tree/master/matlab) to zoom local part of an image for the purpose of comparison between different results.

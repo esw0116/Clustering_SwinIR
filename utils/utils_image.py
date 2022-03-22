@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 
+from pytorch_msssim import ssim_matlab as ssim_pth
 
 '''
 # --------------------------------------------
@@ -795,6 +796,27 @@ def calculate_psnr(img1, img2, border=0, y_psnr=True):
 # --------------------------------------------
 # SSIM
 # --------------------------------------------
+def calculate_ssim_pth(img1, img2, border=0):
+    '''calculate SSIM
+    the same outputs as MATLAB's
+    img1, img2: [0, 255]
+    '''
+    #img1 = img1.squeeze()
+    #img2 = img2.squeeze()
+    if not img1.shape == img2.shape:
+        raise ValueError('Input images must have the same dimensions.')
+    h, w = img1.shape[:2]
+    img1 = img1[border:h-border, border:w-border]
+    img2 = img2[border:h-border, border:w-border]
+
+    if img1.ndim == 2:
+        return ssim_pth(torch.from_numpy(img1).unsqueeze_(0).unsqueeze_(0), torch.from_numpy(img2).unsqueeze_(0).unsqueeze_(0))
+    elif img1.ndim == 3:
+        return ssim_pth(torch.from_numpy(img1).permute(2,0,1).unsqueeze_(0), torch.from_numpy(img2).permute(2,0,1).unsqueeze_(0))
+    else:
+        raise ValueError('Wrong input image dimensions.')
+
+
 def calculate_ssim(img1, img2, border=0):
     '''calculate SSIM
     the same outputs as MATLAB's
@@ -820,7 +842,6 @@ def calculate_ssim(img1, img2, border=0):
             return ssim(np.squeeze(img1), np.squeeze(img2))
     else:
         raise ValueError('Wrong input image dimensions.')
-
 
 def ssim(img1, img2):
     C1 = (0.01 * 255)**2

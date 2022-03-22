@@ -64,6 +64,17 @@ def window_reverse(windows, window_size, H, W):
     return x
 
 
+def measure_time(msg='', timer_list=None):
+        if timer_list is None:
+            return None
+
+        t = torch.cuda.Event(enable_timing=True)
+        t.record()
+        torch.cuda.synchronize()
+        timer_list.append((msg, t))
+        return timer_list
+
+
 class WindowAttention(nn.Module):
     r""" Window based multi-head self attention (W-MSA) module with relative position bias.
     It supports both of shifted and non-shifted window.
@@ -121,18 +132,34 @@ class WindowAttention(nn.Module):
         """
         
         print_attn = kwargs['print_attn'] if 'print_attn' in kwargs.keys() else False
-        
+        print_time = kwargs['print_time'] if 'print_time' in kwargs.keys() else False
+
+        if print_time:
+            a = torch.cuda.Event(enable_timing=True)
+            b = torch.cuda.Event(enable_timing=True)
+            c = torch.cuda.Event(enable_timing=True)
+            d = torch.cuda.Event(enable_timing=True)
+            e = torch.cuda.Event(enable_timing=True)
+            f = torch.cuda.Event(enable_timing=True)
+            
+            a.record()
         B_, N, C = x.shape
         qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
+        if print_time:
+            b.record(); torch.cuda.synchronize(); print('QKV:', a.elapsed_time(b))
 
         q = q * self.scale
         attn = (q @ k.transpose(-2, -1))
+        if print_time:
+            c.record(); torch.cuda.synchronize(); print('Attn1:', b.elapsed_time(c))
 
         relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
             self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
         relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
         attn = attn + relative_position_bias.unsqueeze(0)
+        if print_time:
+            d.record(); torch.cuda.synchronize(); print('AddBias:', c.elapsed_time(d))
 
         if mask is not None:
             nW = mask.shape[0]
@@ -141,6 +168,8 @@ class WindowAttention(nn.Module):
             attn = self.softmax(attn)
         else:
             attn = self.softmax(attn)
+        if print_time:
+            e.record(); torch.cuda.synchronize(); print('Softmax:', d.elapsed_time(e))
 
         if print_attn is True:
             attn_map = attn.clone()
@@ -150,7 +179,9 @@ class WindowAttention(nn.Module):
         x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
-        
+        if print_time:
+            f.record(); torch.cuda.synchronize(); print('Attn2:', e.elapsed_time(f))
+
         if print_attn:
             return x, attn_map
         return x
@@ -219,6 +250,7 @@ class SwinTransformerBlock(nn.Module):
 
         if self.shift_size > 0:
             attn_mask = self.calculate_mask(self.input_resolution)
+            # attn_mask = self.calculate_mask((368, 640))
         else:
             attn_mask = None
 
@@ -227,7 +259,7 @@ class SwinTransformerBlock(nn.Module):
     def calculate_mask(self, x_size):
         # calculate attention mask for SW-MSA
         H, W = x_size
-        img_mask = torch.zeros((1, H, W, 1))  # 1 H W 1
+        img_mask = torch.zeros((1, H, W, 1), device=torch.device('cuda'))  # 1 H W 1
         h_slices = (slice(0, -self.window_size),
                     slice(-self.window_size, -self.shift_size),
                     slice(-self.shift_size, None))
@@ -252,7 +284,8 @@ class SwinTransformerBlock(nn.Module):
         B, L, C = x.shape
         # assert L == H * W, "input feature has wrong size"
         print_attn = kwargs['print_attn'] if 'print_attn' in kwargs.keys() else False
-        
+        print_time = kwargs['print_time'] if 'print_time' in kwargs.keys() else False
+
         shortcut = x
         x = self.norm1(x)
         x = x.view(B, H, W, C)
@@ -275,16 +308,24 @@ class SwinTransformerBlock(nn.Module):
                 attn_windows = self.attn(x_windows, mask=self.attn_mask, **kwargs)  # nW*B, window_size*window_size, C
                 
         else:
+            if print_time:
+                a = torch.cuda.Event(enable_timing=True)
+                b = torch.cuda.Event(enable_timing=True)
+                a.record()
+                my_mask = self.calculate_mask(x_size).to(x.device)
+                b.record(); torch.cuda.synchronize(); print('Mask:', a.elapsed_time(b))
+            else:
+                my_mask = self.calculate_mask(x_size).to(x.device)
+
             if print_attn is True:
-                attn_windows, attn_map = self.attn(x_windows, mask=self.calculate_mask(x_size).to(x.device), **kwargs)
+                attn_windows, attn_map = self.attn(x_windows, mask=my_mask, **kwargs)
                 attn_map = attn_map.permute(0,2,3,1).squeeze(0).cpu().numpy()
                 for k in range(attn_map.shape[-1]):
                     x_df = pd.DataFrame(attn_map[:,:,k])
                     x_df.to_csv('results/attnmap/attnmap_head{}.csv'.format(k))
                     imageio.imwrite('results/attnmap/attnmap_head{}.png'.format(k), attn_map[:,:,k])
-                input()
             else:
-                attn_windows = self.attn(x_windows, mask=self.calculate_mask(x_size).to(x.device), **kwargs)
+                attn_windows = self.attn(x_windows, mask=my_mask, **kwargs)
 
         # merge windows
         attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
@@ -531,7 +572,10 @@ class PatchEmbed(nn.Module):
 
     def __init__(self, img_size=224, patch_size=4, in_chans=3, embed_dim=96, norm_layer=None):
         super().__init__()
-        img_size = to_2tuple(img_size)
+        if isinstance(img_size, tuple):
+            pass
+        else:
+            img_size = to_2tuple(img_size)
         patch_size = to_2tuple(patch_size)
         patches_resolution = [img_size[0] // patch_size[0], img_size[1] // patch_size[1]]
         self.img_size = img_size
@@ -574,7 +618,10 @@ class PatchUnEmbed(nn.Module):
 
     def __init__(self, img_size=224, patch_size=4, in_chans=3, embed_dim=96, norm_layer=None):
         super().__init__()
-        img_size = to_2tuple(img_size)
+        if isinstance(img_size, tuple):
+            pass
+        else:
+            img_size = to_2tuple(img_size)
         patch_size = to_2tuple(patch_size)
         patches_resolution = [img_size[0] // patch_size[0], img_size[1] // patch_size[1]]
         self.img_size = img_size
@@ -702,6 +749,8 @@ class SwinIR(nn.Module):
         self.patch_norm = patch_norm
         self.num_features = embed_dim
         self.mlp_ratio = mlp_ratio
+
+        img_size
 
         # split image into non-overlapping patches
         self.patch_embed = PatchEmbed(
