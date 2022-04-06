@@ -37,7 +37,7 @@
     , "in_chans": 3 
     , "img_size": 64
     , "window_size": 8
-    , "num_groups": 16
+    , "num_groups": 8
     , "img_range": 1.0
     , "depths": [6, 6, 6, 6]
     , "blocks":["RPCTB","RTB","RPCTB","RTB"]

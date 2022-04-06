@@ -10,6 +10,7 @@ import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 
+import time
 import imageio
 import pandas as pd
 
@@ -23,12 +24,25 @@ class Mlp(nn.Module):
         self.fc2 = nn.Linear(hidden_features, out_features)
         self.drop = nn.Dropout(drop)
 
-    def forward(self, x):
+    def forward(self, x, **kwargs):
+        print_time = kwargs['print_time'] if 'print_time' in kwargs.keys() else False
+        if print_time:
+            a = torch.cuda.Event(enable_timing=True)
+            b = torch.cuda.Event(enable_timing=True)
+            c = torch.cuda.Event(enable_timing=True)
+            d = torch.cuda.Event(enable_timing=True)
+            a.record()
         x = self.fc1(x)
+        if print_time:
+            b.record(); torch.cuda.synchronize(); print('Linear1:', a.elapsed_time(b))
         x = self.act(x)
+        if print_time:
+            c.record(); torch.cuda.synchronize(); print('GELU:', b.elapsed_time(c))
         x = self.drop(x)
         x = self.fc2(x)
         x = self.drop(x)
+        if print_time:
+            d.record(); torch.cuda.synchronize(); print('Linear2:', c.elapsed_time(d))
         return x
 
 
@@ -286,6 +300,11 @@ class SwinTransformerBlock(nn.Module):
         print_attn = kwargs['print_attn'] if 'print_attn' in kwargs.keys() else False
         print_time = kwargs['print_time'] if 'print_time' in kwargs.keys() else False
 
+        if print_time:
+            a = torch.cuda.Event(enable_timing=True)
+            b = torch.cuda.Event(enable_timing=True)
+            a.record()
+
         shortcut = x
         x = self.norm1(x)
         x = x.view(B, H, W, C)
@@ -299,6 +318,9 @@ class SwinTransformerBlock(nn.Module):
         # partition windows
         x_windows = window_partition(shifted_x, self.window_size)  # nW*B, window_size, window_size, C
         x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
+        
+        if print_time:
+            b.record(); torch.cuda.synchronize(); print('LN1:', a.elapsed_time(b))
 
         # W-MSA/SW-MSA (to be compatible for testing on images whose shapes are the multiple of window size
         if self.input_resolution == x_size:
@@ -309,8 +331,6 @@ class SwinTransformerBlock(nn.Module):
                 
         else:
             if print_time:
-                a = torch.cuda.Event(enable_timing=True)
-                b = torch.cuda.Event(enable_timing=True)
                 a.record()
                 my_mask = self.calculate_mask(x_size).to(x.device)
                 b.record(); torch.cuda.synchronize(); print('Mask:', a.elapsed_time(b))
@@ -327,6 +347,8 @@ class SwinTransformerBlock(nn.Module):
             else:
                 attn_windows = self.attn(x_windows, mask=my_mask, **kwargs)
 
+        if print_time:
+            a.record()
         # merge windows
         attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
         shifted_x = window_reverse(attn_windows, self.window_size, H, W)  # B H' W' C
@@ -339,9 +361,11 @@ class SwinTransformerBlock(nn.Module):
         x = x.view(B, H * W, C)
 
         # FFN
-        x = shortcut + self.drop_path(x)
-        x = x + self.drop_path(self.mlp(self.norm2(x)))
-
+        # x = shortcut + self.drop_path(x)
+        x = shortcut + x
+        x = x + self.drop_path(self.mlp(self.norm2(x), **kwargs))
+        if print_time:
+            b.record(); torch.cuda.synchronize(); print('LN2:', a.elapsed_time(b))
         return x
 
     def extra_repr(self) -> str:

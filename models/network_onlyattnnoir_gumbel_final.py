@@ -172,7 +172,7 @@ class WindowAttention(nn.Module):
         # trunc_normal_(self.relative_position_bias_table, std=.02)
         self.softmax = nn.Softmax(dim=-1)
 
-    def forward(self, x, mask=None, labels=None, cnt_labels=None, x_windows=None):
+    def forward(self, x, mask=None, labels=None, cnt_labels=None, x_windows=None, **kwargs):
         """
         Args:
             x: input features with shape of (num_windows*B, N, C)
@@ -376,12 +376,24 @@ class ClusteredTransformerBlock(nn.Module):
 
         return attn_mask
 
-    def forward(self, x, x_size, x_centers=None, labels=None, cnt_labels=None):
+    def forward(self, x, x_size, x_centers=None, labels=None, cnt_labels=None, **kwargs):
+        print_time = kwargs['print_time'] if 'print_time' in kwargs.keys() else False
+
         H, W = x_size
         B, L, C = x.shape
         shortcut = x
 
+        if print_time:
+            a = torch.cuda.Event(enable_timing=True)
+            bb = torch.cuda.Event(enable_timing=True)
+            c = torch.cuda.Event(enable_timing=True)
+            d = torch.cuda.Event(enable_timing=True)
+            e = torch.cuda.Event(enable_timing=True)
+
+            a.record()
         x = self.norm1(x)
+        if print_time:
+            bb.record(); torch.cuda.synchronize(); print('LN1:', a.elapsed_time(bb))
 
         x = x.reshape(B, H, W, C)
         # # cyclic shift
@@ -412,12 +424,17 @@ class ClusteredTransformerBlock(nn.Module):
         else:
             assert x_centers is not None
 
+        if print_time:
+            c.record(); torch.cuda.synchronize(); print('Gumbel:', bb.elapsed_time(c))
+
         # # W-MSA/SW-MSA (to be compatible for testing on images whose shapes are the multiple of window size
         # # if self.input_resolution == x_size:
         # #     attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
         # # else:
         # #     attn_windows = self.attn(x_windows, mask=self.calculate_mask(x_size).to(x.device))
-        attn_windows = self.attn(x_centers, mask=None, labels=labels, cnt_labels=cnt_labels, x_windows=x_windows)  # nW*B, L, C
+        attn_windows = self.attn(x_centers, mask=None, labels=labels, cnt_labels=cnt_labels, x_windows=x_windows, **kwargs)  # nW*B, L, C
+        if print_time:
+            d.record(); torch.cuda.synchronize(); print('MSA:', c.elapsed_time(d))
 
         # # merge windows
         attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
@@ -433,7 +450,8 @@ class ClusteredTransformerBlock(nn.Module):
         # FFN
         x = shortcut + self.drop_path(x)
         x = x + self.drop_path(self.mlp(self.norm2(x)))
-
+        if print_time:
+            e.record(); torch.cuda.synchronize(); print('LN2:', d.elapsed_time(e))
         return x, x_centers, labels, cnt_labels
 
 
@@ -841,15 +859,15 @@ class BasicClusterLayer(nn.Module):
                         elif j == 1:
                             x, x_centers2, labels2, cnt_labels2 = blk(x, x_size)
                         elif j % 2 == 0:
-                            x, _, _, _ = blk(x, x_size, x_centers=x_centers1, labels=labels1, cnt_labels=cnt_labels1)
+                            x, _, _, _ = blk(x, x_size, x_centers=x_centers1, labels=labels1, cnt_labels=cnt_labels1, **kwargs)
                         else:
-                            x, _, _, _ = blk(x, x_size, x_centers=x_centers2, labels=labels2, cnt_labels=cnt_labels2)
+                            x, _, _, _ = blk(x, x_size, x_centers=x_centers2, labels=labels2, cnt_labels=cnt_labels2, **kwargs)
 
                     else:
                         if j == 0:
-                            x, x_centers, labels, cnt_labels = blk(x, x_size)
+                            x, x_centers, labels, cnt_labels = blk(x, x_size, **kwargs)
                         else:
-                            x, _, _, _ = blk(x, x_size, x_centers=x_centers, labels=labels, cnt_labels=cnt_labels)
+                            x, _, _, _ = blk(x, x_size, x_centers=x_centers, labels=labels, cnt_labels=cnt_labels, **kwargs)
         else:
             for j, blk in enumerate(self.blocks):
                 timer_list = self.measure_time(msg=f'Block_{j}', timer_list=timer_list)
@@ -857,7 +875,6 @@ class BasicClusterLayer(nn.Module):
                     x_centers = checkpoint.checkpoint(blk, x_centers, x_size)
                 else:
                     x, _, _, _ = blk(x, x_size)
-        timer_list = self.measure_time(msg='window_partition', timer_list=timer_list)
 
         if imgsave_name is not None:
             my_labels = window_reverse(labels.view(-1, int(self.window_size*self.groupwindow_ratio), int(self.window_size*self.groupwindow_ratio), 1), int(self.window_size*self.groupwindow_ratio), H, W).squeeze(3).cpu().numpy()

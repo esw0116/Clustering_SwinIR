@@ -32,7 +32,7 @@
 # python main_test_clustertransformer.py --benchmark div2k --task kmeans_tooshort_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_404/245000/model/G.pth
 # python main_test_clustertransformer.py --benchmark div2k --task kmeans_tooshortkeepv_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_406/190000/model/G.pth
 
-# python main_test_clustertransformer.py --benchmark div2k --task swin_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_54/250000/model/G.pth
+python main_test_clustertransformer.py --benchmark div2k --task swin_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_54/250000/model/G.pth --time --cpu
 # python main_test_clustertransformer.py --benchmark div2k --task onlySA_shallow_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_299/250000/model/G.pth
 # python main_test_clustertransformer.py --benchmark div2k --task onlySA_thin_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_267/250000/model/G.pth
 # python main_test_clustertransformer.py --benchmark div2k --task onlySA_short_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_319/250000/model/G.pth
@@ -48,7 +48,7 @@
 # python main_test_clustertransformer.py --benchmark div2k --task iic_postkeepv_ws_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_427/250000/model/G.pth
 # python main_test_clustertransformer.py --benchmark Set5 --task kmeans_final_small_yes --model_path nsmltrained_models/KR80934_CVLAB_SR_490/250000/model/G.pth
 
-python main_test_clustertransformer.py --benchmark div2k --task gumbel_final_small_yes --model_path nsmltrained_models/KR80934_CVLAB_SR_488/250000/model/G.pth
+# python main_test_clustertransformer.py --benchmark div2k --task gumbel_final_small_yes --model_path nsmltrained_models/KR80934_CVLAB_SR_488/250000/model/G.pth
 # python main_test_clustertransformer.py --benchmark Urban100 --task gumbel_final_small_no --model_path nsmltrained_models/KR80934_CVLAB_SR_487/250000/model/G.pth
 # python main_test_clustertransformer.py --benchmark div2k --scale 3 --task swin_sr --model_path nsmltrained_models/002_lightweightSR_DIV2K_s64w8_SwinIR-S_x3.pth
 # python main_test_clustertransformer.py --benchmark div2k --scale 3 --task gumbel_final_small_yes --model_path nsmltrained_models/KR80934_CVLAB_SR2_9/125000/model/G.pth

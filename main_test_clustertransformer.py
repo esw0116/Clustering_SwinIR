@@ -105,6 +105,8 @@ def main():
                 print(params, macs)
             output = output[..., :h_old * args.scale, :w_old * args.scale]
             test_results['latency'].append(runtime)
+            if args.time:
+                input()
         
         # save image
         output = output[0:1]
@@ -162,7 +164,10 @@ def main():
 def define_model(args):
     # use 'pixelshuffledirect' to save parameters
     if args.task == 'swin_sr':
-        from models.network_swinir import SwinIR as net
+        if args.cpu:
+            from models.network_swinir_cpu import SwinIR as net
+        else:
+            from models.network_swinir import SwinIR as net
         model = net(upscale=args.scale, in_chans=3, img_size=64, window_size=8,
                     img_range=1., depths=[6, 6, 6, 6], embed_dim=60, num_heads=[6, 6, 6, 6],
                     mlp_ratio=2, upsampler='pixelshuffledirect', resi_connection='1conv')
