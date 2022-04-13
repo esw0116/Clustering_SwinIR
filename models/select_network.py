@@ -498,6 +498,26 @@ def define_G(opt, use_nsml):
                    resi_connection=opt_net['resi_connection'],
                    )
 
+    elif net_type == 'mixed':
+        from models.network_onlyattnnoir_mixed_noLN import SwinIR as net
+        netG = net(upscale=opt_net['upscale'],
+                   in_chans=opt_net['in_chans'],
+                   img_size=opt_net['img_size'],
+                   window_size=opt_net['window_size'],
+                   img_range=opt_net['img_range'],
+                   keep_v=opt_net['keep_v'],
+                   recycle=opt_net['recycle'],
+                   num_groups=opt_net['num_groups'],
+                   depths=opt_net['depths'],
+                   blocks=opt_net['blocks'],
+                   embed_dim=opt_net['embed_dim'],
+                   num_heads=opt_net['num_heads'],
+                   mlp_ratio=opt_net['mlp_ratio'],
+                   shifted_window=opt_net['shifted_window'],
+                   upsampler=opt_net['upsampler'],
+                   resi_connection=opt_net['resi_connection'],
+                   )
+
     elif net_type == 'block_kmeans_mlp':
         from models.network_onlyattnnoir_kmeans_compmlp import SwinIR as net
         netG = net(upscale=opt_net['upscale'],
