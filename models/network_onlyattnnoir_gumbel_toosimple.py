@@ -70,9 +70,9 @@ class Mlp(nn.Module):
         super().__init__()
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
-        self.fc1 = nn.Conv1d(in_features, hidden_features, kernel_size=1)
+        self.fc1 = nn.Linear(in_features, hidden_features)
         self.act = act_layer()
-        self.fc2 = nn.Conv1d(hidden_features, out_features, kernel_size=1)
+        self.fc2 = nn.Linear(hidden_features, out_features)
 
         self.drop = nn.Dropout(drop)
 
@@ -159,11 +159,11 @@ class WindowAttention(nn.Module):
             relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
             self.register_buffer("relative_position_index", relative_position_index)
 
-        self.qkv = nn.Conv1d(dim, dim * 3, bias=qkv_bias) # 96 -> 288
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias) # 96 -> 288
 
         self.attn_drop = nn.Dropout(attn_drop)
 
-        self.proj = nn.Conv1d(dim, dim)
+        self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
         # trunc_normal_(self.relative_position_bias_table, std=.02)
@@ -177,8 +177,7 @@ class WindowAttention(nn.Module):
         """
 
         B_, N, C = x.shape
-        x = x.transpose(1,2)
-        qkv = self.qkv(x).transpose(1,2).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4) # 3, 784, 6, 49, 16
+        qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4) # 3, 784, 6, 49, 16
         q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple) # 784, 6, 49, 16
 
         q = q * self.scale
@@ -203,10 +202,9 @@ class WindowAttention(nn.Module):
 
         attn = self.attn_drop(attn)
         
-        x = (attn @ v).transpose(1, 2).reshape(B_, N, C).transpose(1,2)
+        x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
-        x = x.transpose(1,2)
 
         if self.keep_v:
             x = x.gather(
@@ -389,9 +387,7 @@ class ClusteredTransformerBlock(nn.Module):
 
         # FFN
         x = shortcut + self.drop_path(x)
-        x = x.transpose(1,2)
         x = x + self.drop_path(self.mlp(x))
-        x = x.transpose(1,2)
         if print_time:
             e.record(); torch.cuda.synchronize(); print('LN2:', d.elapsed_time(e))
         return x, x_centers, labels, cnt_labels
@@ -531,9 +527,7 @@ class SwinTransformerBlock(nn.Module):
 
         # FFN
         x = shortcut + self.drop_path(x)
-        x = x.transpose(1,2)
         x = x + self.drop_path(self.mlp(x))
-        x = x.transpose(1,2)
         return x
 
     def extra_repr(self) -> str:
