@@ -561,7 +561,7 @@ class MixedBlock(nn.Module):
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
         # build blocks
-        self.swin = SwinTransformerBlock(dim=dim//2, input_resolution=input_resolution,
+        self.swin = SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
                                     num_heads=num_heads, window_size=window_size,
                                     shift_size=shift_size,
                                     mlp_ratio=mlp_ratio,
@@ -571,18 +571,18 @@ class MixedBlock(nn.Module):
                                     norm_layer=norm_layer)
 
 
-        self.ica = ClusteredTransformerBlock(dim=dim//2, input_resolution=input_resolution,
-                            num_heads=num_heads, window_size=int(window_size*groupwindow_ratio), 
-                            keep_v=keep_v,
-                            clustering=clustering,
-                            relative_bias=relative_bias,
-                            num_groups=self.num_groups,
-                            shift_size=0,
-                            mlp_ratio=mlp_ratio,
-                            qkv_bias=qkv_bias, qk_scale=qk_scale,
-                            drop=drop, attn_drop=attn_drop,
-                            drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
-                            norm_layer=norm_layer)
+        # self.ica = ClusteredTransformerBlock(dim=dim, input_resolution=input_resolution,
+        #                     num_heads=num_heads, window_size=int(window_size*groupwindow_ratio), 
+        #                     keep_v=keep_v,
+        #                     clustering=clustering,
+        #                     relative_bias=relative_bias,
+        #                     num_groups=self.num_groups,
+        #                     shift_size=0,
+        #                     mlp_ratio=mlp_ratio,
+        #                     qkv_bias=qkv_bias, qk_scale=qk_scale,
+        #                     drop=drop, attn_drop=attn_drop,
+        #                     drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
+        #                     norm_layer=norm_layer)
 
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
@@ -618,9 +618,11 @@ class MixedBlock(nn.Module):
         else:
             assert x_centers is not None
 
-        x[..., :C//2] = self.swin(x[..., :C//2], x_size)
-        x[..., C//2:] = self.ica(x[..., C//2:], x_size, x_centers=x_centers[..., C//2:], labels=labels, cnt_labels=cnt_labels, **kwargs)
+        # x = self.ica(x, x_size, x_centers=x_centers, labels=labels, cnt_labels=cnt_labels, **kwargs)
+        # x = shortcut + self.drop_path(x)
+        # shortcut = x
 
+        x = self.swin(x, x_size)
         x = shortcut + self.drop_path(x)
         x = x + self.drop_path(self.mlp(x))
 
