@@ -273,7 +273,8 @@ class SwinTransformerBlock(nn.Module):
     def calculate_mask(self, x_size):
         # calculate attention mask for SW-MSA
         H, W = x_size
-        img_mask = torch.zeros((1, H, W, 1), device=torch.device('cuda'))  # 1 H W 1
+        # img_mask = torch.zeros((1, H, W, 1), device=torch.device('cuda'))  # 1 H W 1
+        img_mask = torch.zeros((1, H, W, 1))  # 1 H W 1
         h_slices = (slice(0, -self.window_size),
                     slice(-self.window_size, -self.shift_size),
                     slice(-self.shift_size, None))

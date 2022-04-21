@@ -621,8 +621,12 @@ class MixedBlock(nn.Module):
         x[..., :C//2] = self.swin(x[..., :C//2], x_size)
         x[..., C//2:] = self.ica(x[..., C//2:], x_size, x_centers=x_centers[..., C//2:], labels=labels, cnt_labels=cnt_labels, **kwargs)
 
-        x = shortcut + self.drop_path(x)
-        x = x + self.drop_path(self.mlp(x))
+        if self.training:
+            x = shortcut + self.drop_path(x)
+            x = x + self.drop_path(self.mlp(x))
+        else:
+            x += shortcut
+            x += self.mlp(x)
 
         return x, x_centers, labels, cnt_labels
 

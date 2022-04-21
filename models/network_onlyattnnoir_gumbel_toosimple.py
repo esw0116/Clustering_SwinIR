@@ -386,8 +386,13 @@ class ClusteredTransformerBlock(nn.Module):
         x = x.view(B, H * W, C)
 
         # FFN
-        x = shortcut + self.drop_path(x)
-        x = x + self.drop_path(self.mlp(x))
+        if self.training:
+            x = shortcut + self.drop_path(x)
+            x = x + self.drop_path(self.mlp(x))
+        else:
+            x += shortcut
+            x += self.mlp(x)
+
         if print_time:
             e.record(); torch.cuda.synchronize(); print('LN2:', d.elapsed_time(e))
         return x, x_centers, labels, cnt_labels
@@ -526,8 +531,12 @@ class SwinTransformerBlock(nn.Module):
         x = x.view(B, H * W, C)
 
         # FFN
-        x = shortcut + self.drop_path(x)
-        x = x + self.drop_path(self.mlp(x))
+        if self.training:
+            x = shortcut + self.drop_path(x)
+            x = x + self.drop_path(self.mlp(x))
+        else:
+            x += shortcut
+            x += self.mlp(x)
         return x
 
     def extra_repr(self) -> str:

@@ -570,20 +570,6 @@ class MixedBlock(nn.Module):
                                     drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
                                     norm_layer=norm_layer)
 
-
-        # self.ica = ClusteredTransformerBlock(dim=dim, input_resolution=input_resolution,
-        #                     num_heads=num_heads, window_size=int(window_size*groupwindow_ratio), 
-        #                     keep_v=keep_v,
-        #                     clustering=clustering,
-        #                     relative_bias=relative_bias,
-        #                     num_groups=self.num_groups,
-        #                     shift_size=0,
-        #                     mlp_ratio=mlp_ratio,
-        #                     qkv_bias=qkv_bias, qk_scale=qk_scale,
-        #                     drop=drop, attn_drop=attn_drop,
-        #                     drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
-        #                     norm_layer=norm_layer)
-
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
         if clustering:
@@ -597,36 +583,15 @@ class MixedBlock(nn.Module):
         B, L, C = x.shape
         shortcut = x
 
-        if self.cluster_here:
-            x_windows = x.reshape(B, H, W, C)
-            x_windows = window_partition(x_windows, self.window_size*self.groupwindow_ratio)  # nW*B, window_size, window_size, C
-            x_windows = x_windows.view(-1, self.window_size*self.groupwindow_ratio * self.window_size*self.groupwindow_ratio, C)  # nW*B, window_size*window_size, C
-            b = x_windows.shape[0]
-            assert x_centers is None
-            x_gumbels = self.gumbel_clustering(x_windows)
-            if self.training:
-                x_gumbels = F.gumbel_softmax(x_gumbels, dim=-1, hard=True)
-            else:
-                gumbel_index = x_gumbels.max(dim=-1, keepdim=True)[1]
-                x_gumbels = torch.zeros_like(x_windows).scatter_(-1, gumbel_index, 1.0)
-            _, labels = torch.max(x_gumbels, dim=-1)
-
-            x_centers = construct_centroid(self.num_groups, x_windows, labels)
-            label_ones = torch.ones_like(labels)
-            cnt_labels = torch.zeros(b, self.num_groups).type_as(labels)
-            cnt_labels.scatter_add_(dim=1, index=labels, src=label_ones)
-        else:
-            assert x_centers is not None
-
-        # x = self.ica(x, x_size, x_centers=x_centers, labels=labels, cnt_labels=cnt_labels, **kwargs)
-        # x = shortcut + self.drop_path(x)
-        # shortcut = x
-
         x = self.swin(x, x_size)
-        x = shortcut + self.drop_path(x)
-        x = x + self.drop_path(self.mlp(x))
+        if self.training:
+            x = shortcut + self.drop_path(x)
+            x = x + self.drop_path(self.mlp(x))
+        else:
+            x += shortcut
+            x += self.mlp(x)
 
-        return x, x_centers, labels, cnt_labels
+        return x, 0,0,0
 
     def extra_repr(self) -> str:
         return f"dim={self.dim}, input_resolution={self.input_resolution}, mlp_ratio={self.mlp_ratio}"
@@ -635,7 +600,7 @@ class MixedBlock(nn.Module):
         flops = 0
         H, W = self.input_resolution
         flops += self.swin.flops()
-        flops += self.ica.flops()
+        # flops += self.ica.flops()
         # mlp
         flops += 2 * H * W * self.dim * self.dim * self.mlp_ratio
         return flops

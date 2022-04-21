@@ -619,13 +619,19 @@ class MixedBlock(nn.Module):
             assert x_centers is not None
 
         x = self.ica(x, x_size, x_centers=x_centers, labels=labels, cnt_labels=cnt_labels, **kwargs)
-        x = shortcut + self.drop_path(x)
+        if self.training:
+            x = shortcut + self.drop_path(x)
+        else:
+            x += shortcut
         shortcut = x
 
         x = self.swin(x, x_size)
-        x = shortcut + self.drop_path(x)
-        x = x + self.drop_path(self.mlp(x))
-
+        if self.training:
+            x = shortcut + self.drop_path(x)
+            x = x + self.drop_path(self.mlp(x))
+        else:
+            x += shortcut
+            x += self.mlp(x)
         return x, x_centers, labels, cnt_labels
 
     def extra_repr(self) -> str:

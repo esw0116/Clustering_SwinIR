@@ -178,6 +178,22 @@ class WindowAttention(nn.Module):
             x: input features with shape of (num_windows*B, N, C)
             mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
         """
+
+        print_attn = kwargs['print_attn'] if 'print_attn' in kwargs.keys() else False
+        print_time = kwargs['print_time'] if 'print_time' in kwargs.keys() else False
+
+        if print_time:
+            a = torch.cuda.Event(enable_timing=True)
+            b = torch.cuda.Event(enable_timing=True)
+            c = torch.cuda.Event(enable_timing=True)
+            d = torch.cuda.Event(enable_timing=True)
+            e = torch.cuda.Event(enable_timing=True)
+            f = torch.cuda.Event(enable_timing=True)
+            g = torch.cuda.Event(enable_timing=True)
+            h = torch.cuda.Event(enable_timing=True)
+            
+            a.record()
+
         if self.keep_v:
             B_, N, C = x.shape  # N: number of groups
             N_ = x_windows.shape[1] #: N_: number or pixels
@@ -189,8 +205,14 @@ class WindowAttention(nn.Module):
             v = self.construct_centroid(N, v, labels)
             v = v.reshape(B_, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
 
+            if print_time:
+                b.record(); torch.cuda.synchronize(); print('QKV:', a.elapsed_time(b))
+            
             q = q * self.scale
             attn = (q @ k.transpose(-2, -1))
+
+            if print_time:
+                c.record(); torch.cuda.synchronize(); print('Attn1:', b.elapsed_time(c))
 
         else:
             B_, N, C = x.shape
@@ -206,6 +228,9 @@ class WindowAttention(nn.Module):
             relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
             attn += relative_position_bias.unsqueeze(0).expand(B_, -1, -1, -1)
 
+        if print_time:
+            d.record(); torch.cuda.synchronize(); print('AddBias:', c.elapsed_time(d))
+
         if mask is not None:
             nW = mask.shape[0]
             attn = attn.view(B_ // nW, nW, self.num_heads, N, N) + mask.unsqueeze(1).unsqueeze(0)
@@ -215,6 +240,9 @@ class WindowAttention(nn.Module):
         attn_ =  attn.permute(0,3,1,2)
         attn_[cnt_labels == 0] = -100
         attn = attn_.permute(0,2,3,1)
+
+        if print_time:
+            e.record(); torch.cuda.synchronize(); print('Mask:', d.elapsed_time(e))
 
         if self.keep_v:
             maxes = torch.max(attn, -1, keepdim=True)[0]
@@ -226,11 +254,17 @@ class WindowAttention(nn.Module):
         else:
             attn = self.softmax(attn)
 
+        if print_time:
+            f.record(); torch.cuda.synchronize(); print('Softmax:', e.elapsed_time(f))
+
         attn = self.attn_drop(attn)
         
         x = (attn @ v).transpose(1, 2).reshape(B_, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
+
+        if print_time:
+            g.record(); torch.cuda.synchronize(); print('Attn2:', f.elapsed_time(g))
 
         if self.keep_v:
             x = x.gather(
@@ -238,6 +272,9 @@ class WindowAttention(nn.Module):
                 index=labels.view(*labels.size(), 1).repeat(1, 1, C),
             )
         
+        if print_time:
+            h.record(); torch.cuda.synchronize(); print('Expand:', g.elapsed_time(h))
+
         return x
 
     def construct_centroid(
@@ -389,11 +426,10 @@ class ClusteredTransformerBlock(nn.Module):
             c = torch.cuda.Event(enable_timing=True)
             d = torch.cuda.Event(enable_timing=True)
             e = torch.cuda.Event(enable_timing=True)
+            f = torch.cuda.Event(enable_timing=True)
 
             a.record()
         x = self.norm1(x)
-        if print_time:
-            bb.record(); torch.cuda.synchronize(); print('LN1:', a.elapsed_time(bb))
 
         x = x.reshape(B, H, W, C)
         # # cyclic shift
@@ -407,6 +443,9 @@ class ClusteredTransformerBlock(nn.Module):
         x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
         b = x_windows.shape[0]
 
+        if print_time:
+            bb.record(); torch.cuda.synchronize(); print('LN1:', a.elapsed_time(bb))
+        
         if self.cluster_here:
             assert x_centers is None
             x_gumbels = self.gumbel_clustering(x_windows)
@@ -427,11 +466,6 @@ class ClusteredTransformerBlock(nn.Module):
         if print_time:
             c.record(); torch.cuda.synchronize(); print('Gumbel:', bb.elapsed_time(c))
 
-        # # W-MSA/SW-MSA (to be compatible for testing on images whose shapes are the multiple of window size
-        # # if self.input_resolution == x_size:
-        # #     attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
-        # # else:
-        # #     attn_windows = self.attn(x_windows, mask=self.calculate_mask(x_size).to(x.device))
         attn_windows = self.attn(x_centers, mask=None, labels=labels, cnt_labels=cnt_labels, x_windows=x_windows, **kwargs)  # nW*B, L, C
         if print_time:
             d.record(); torch.cuda.synchronize(); print('MSA:', c.elapsed_time(d))
@@ -448,8 +482,11 @@ class ClusteredTransformerBlock(nn.Module):
         x = x.view(B, H * W, C)
 
         # FFN
-        x = shortcut + self.drop_path(x)
-        x = x + self.drop_path(self.mlp(self.norm2(x)))
+        # x = shortcut + self.drop_path(x)
+        # x = x + self.drop_path(self.mlp(self.norm2(x)))
+
+        x += shortcut
+        x += self.mlp(self.norm2(x))
         if print_time:
             e.record(); torch.cuda.synchronize(); print('LN2:', d.elapsed_time(e))
         return x, x_centers, labels, cnt_labels
@@ -590,8 +627,12 @@ class SwinTransformerBlock(nn.Module):
         x = x.view(B, H * W, C)
 
         # FFN
-        x = shortcut + self.drop_path(x)
-        x = x + self.drop_path(self.mlp(self.norm2(x)))
+        # x = shortcut + self.drop_path(x)
+        # x = x + self.drop_path(self.mlp(self.norm2(x)))
+
+        x += shortcut
+        x += self.mlp(self.norm2(x))
+
 
         return x
 
@@ -894,7 +935,6 @@ class BasicClusterLayer(nn.Module):
                     break
 
                 print(f'{msg}: {t.elapsed_time(timer_list[idx + 1][1])}')
-            print('done\n')
 
         return x
 
