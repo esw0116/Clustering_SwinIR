@@ -13,8 +13,6 @@ import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 
-import torchvision.transforms.functional as tf
-from models.segmentation.net10a_twohead import SegmentationNet10aTwoHead
 import imageio
 
 
@@ -75,6 +73,7 @@ class Mlp(nn.Module):
         self.fc1 = nn.Linear(in_features, hidden_features)
         self.act = act_layer()
         self.fc2 = nn.Linear(hidden_features, out_features)
+
         self.drop = nn.Dropout(drop)
 
     def forward(self, x):
@@ -160,11 +159,7 @@ class WindowAttention(nn.Module):
             relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
             self.register_buffer("relative_position_index", relative_position_index)
 
-        if self.keep_v:
-            self.qk = nn.Linear(dim, dim * 2, bias=qkv_bias) # 96 -> 192
-            self.v = nn.Linear(dim, dim * 1, bias=qkv_bias) # 96 -> 96
-        else:
-            self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias) # 96 -> 288
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias) # 96 -> 288
 
         self.attn_drop = nn.Dropout(attn_drop)
 
@@ -174,33 +169,19 @@ class WindowAttention(nn.Module):
         # trunc_normal_(self.relative_position_bias_table, std=.02)
         self.softmax = nn.Softmax(dim=-1)
 
-    def forward(self, x, mask=None, labels=None, cnt_labels=None, x_windows=None):
+    def forward(self, x, mask=None, labels=None, cnt_labels=None, **kwargs):
         """
         Args:
             x: input features with shape of (num_windows*B, N, C)
             mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
         """
-        if self.keep_v:
-            B_, N, C = x.shape  # N: number of groups
-            N_ = x_windows.shape[1] #: N_: number or pixels
 
-            qk = self.qk(x).reshape(B_, N, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-            q, k = qk[0], qk[1]  # make torchscript happy (cannot use tensor as tuple)
+        B_, N, C = x.shape
+        qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4) # 3, 784, 6, 49, 16
+        q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple) # 784, 6, 49, 16
 
-            v = self.v(x_windows)
-            v = construct_centroid(N, v, labels)
-            v = v.reshape(B_, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
-
-            q = q * self.scale
-            attn = (q @ k.transpose(-2, -1))
-
-        else:
-            B_, N, C = x.shape
-            qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4) # 3, 784, 6, 49, 16
-            q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple) # 784, 6, 49, 16
-
-            q = q * self.scale
-            attn = (q @ k.transpose(-2, -1))
+        q = q * self.scale
+        attn = (q @ k.transpose(-2, -1))
 
         if self.relative_bias:
             relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
@@ -217,16 +198,7 @@ class WindowAttention(nn.Module):
         attn_ =  attn.permute(0,3,1,2)
         attn_[cnt_labels == 0] = -100
         attn = attn_.permute(0,2,3,1)
-
-        if self.keep_v:
-            maxes = torch.max(attn, -1, keepdim=True)[0]
-            attn_exp = torch.exp(attn-maxes)
-            attn_exp = attn_exp * cnt_labels.unsqueeze(1).unsqueeze(1)
-            attn_exp_sum = torch.sum(attn_exp, -1, keepdim=True)
-            attn = attn_exp / attn_exp_sum
-
-        else:
-            attn = self.softmax(attn)
+        attn = self.softmax(attn)
 
         attn = self.attn_drop(attn)
         
@@ -282,7 +254,7 @@ class ClusteredTransformerBlock(nn.Module):
         norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
     """
 
-    def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0, keep_v=False, num_groups=16,
+    def __init__(self, dim, input_resolution, num_heads, window_size=7, shift_size=0, keep_v=False, clustering=True, num_groups=16,
                  relative_bias=False, mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0., drop_path=0.,
                  act_layer=nn.GELU, norm_layer=nn.LayerNorm):
         super().__init__()
@@ -290,64 +262,89 @@ class ClusteredTransformerBlock(nn.Module):
         self.input_resolution = input_resolution
         self.num_heads = num_heads
         self.keep_v = keep_v
+        self.cluster_here = clustering
         self.relative_bias = relative_bias
         self.num_groups = num_groups
         self.window_size = window_size
         self.shift_size = shift_size
-        self.mlp_ratio = mlp_ratio
         if min(self.input_resolution) <= self.window_size:
             # if window size is larger than input resolution, we don't partition windows
             self.shift_size = 0
             self.window_size = min(self.input_resolution)
         assert 0 <= self.shift_size < self.window_size, "shift_size must in 0-window_size"
 
-        self.norm1 = norm_layer(dim)
         self.attn = WindowAttention(
             dim, window_size=(num_groups, 1), num_heads=num_heads, keep_v=keep_v, relative_bias=relative_bias,
             qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
 
-        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-        self.norm2 = norm_layer(dim)
-        mlp_hidden_dim = int(dim * mlp_ratio)
-        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
+    def forward(self, x, x_size, x_centers, labels, cnt_labels, **kwargs):
+        print_time = kwargs['print_time'] if 'print_time' in kwargs.keys() else False
 
-    def forward(self, x, x_size, labels=None, cnt_labels=None, x_windows=None):
-        # H, W = x_size
-        # B, L, C = x.shape
+        H, W = x_size
+        B, L, C = x.shape
+        shortcut = x
 
-        if self.keep_v:
-            shortcut = x_windows
+        if print_time:
+            a = torch.cuda.Event(enable_timing=True)
+            bb = torch.cuda.Event(enable_timing=True)
+            c = torch.cuda.Event(enable_timing=True)
+            d = torch.cuda.Event(enable_timing=True)
+            e = torch.cuda.Event(enable_timing=True)
+
+            a.record()
+        if print_time:
+            bb.record(); torch.cuda.synchronize(); print('LN1:', a.elapsed_time(bb))
+
+        x = x.reshape(B, H, W, C)
+        # # cyclic shift
+        if self.shift_size > 0:
+            shifted_x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
         else:
-            shortcut = x
-        
-        x = self.norm1(x)
+            shifted_x = x
 
-        # W-MSA/SW-MSA (to be compatible for testing on images whose shapes are the multiple of window size
-        x = self.attn(x, mask=None, labels=labels, cnt_labels=cnt_labels, x_windows=x_windows)  # nW*B, L, C
+        # partition windows
+        x_windows = window_partition(shifted_x, self.window_size)  # nW*B, window_size, window_size, C
+        x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
 
-        # FFN
-        x = shortcut + self.drop_path(x)
-        x = x + self.drop_path(self.mlp(self.norm2(x)))
+        if print_time:
+            c.record(); torch.cuda.synchronize(); print('Gumbel:', bb.elapsed_time(c))
 
+        attn_windows = self.attn(x_centers, mask=None, labels=labels, cnt_labels=cnt_labels, **kwargs)  # nW*B, L, C
+        if print_time:
+            d.record(); torch.cuda.synchronize(); print('MSA:', c.elapsed_time(d))
+
+        # # merge windows
+        attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
+        shifted_x = window_reverse(attn_windows, self.window_size, H, W)  # B H' W' C
+
+        # # reverse cyclic shift
+        if self.shift_size > 0:
+            x = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
+        else:
+            x = shifted_x
+        x = x.view(B, H * W, C)
+
+        if print_time:
+            e.record(); torch.cuda.synchronize(); print('LN2:', d.elapsed_time(e))
         return x
-
 
     def extra_repr(self) -> str:
         return f"dim={self.dim}, input_resolution={self.input_resolution}, num_heads={self.num_heads}, " \
-                f"window_size={self.window_size}, num_groups={self.num_groups}, shift_size={self.shift_size}, mlp_ratio={self.mlp_ratio}"
+                f"window_size={self.window_size}, num_groups={self.num_groups}, shift_size={self.shift_size}"
     
     def flops(self):
         flops = 0
         H, W = self.input_resolution
         # norm1
-        flops += self.dim * H * W
+        # flops += self.dim * H * W
+        #gumbel softmax
+        if self.cluster_here:
+            flops += H * W * self.dim *  self.num_groups
         # W-MSA/SW-MSA
         nW = H * W / self.window_size / self.window_size
         flops += nW * self.attn.flops(self.num_groups, self.window_size*self.window_size)
-        # mlp
-        flops += 2 * H * W * self.dim * self.dim * self.mlp_ratio
         # norm2
-        flops += self.dim * H * W
+        # flops += self.dim * H * W
         return flops
         
 
@@ -379,34 +376,31 @@ class SwinTransformerBlock(nn.Module):
         self.num_heads = num_heads
         self.window_size = window_size
         self.shift_size = shift_size
-        self.mlp_ratio = mlp_ratio
         if min(self.input_resolution) <= self.window_size:
             # if window size is larger than input resolution, we don't partition windows
             self.shift_size = 0
             self.window_size = min(self.input_resolution)
         assert 0 <= self.shift_size < self.window_size, "shift_size must in 0-window_size"
 
-        self.norm1 = norm_layer(dim)
         self.attn = WindowAttention(
             dim, window_size=to_2tuple(self.window_size), num_heads=num_heads,
             qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
 
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-        self.norm2 = norm_layer(dim)
-        mlp_hidden_dim = int(dim * mlp_ratio)
-        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
+        # self.norm2 = norm_layer(dim)
 
-        if self.shift_size > 0:
-            attn_mask = self.calculate_mask(self.input_resolution)
-        else:
-            attn_mask = None
+        # if self.shift_size > 0:
+        #     # attn_mask = self.calculate_mask((368, 640))
+        #     attn_mask = self.calculate_mask(self.input_resolution)
+        # else:
+        #     attn_mask = None
 
-        self.register_buffer("attn_mask", attn_mask)
+        # self.register_buffer("attn_mask", attn_mask)
 
     def calculate_mask(self, x_size):
         # calculate attention mask for SW-MSA
         H, W = x_size
-        img_mask = torch.zeros((1, H, W, 1))  # 1 H W 1
+        img_mask = torch.zeros((1, H, W, 1), device=torch.device('cuda'))  # 1 H W 1
         h_slices = (slice(0, -self.window_size),
                     slice(-self.window_size, -self.shift_size),
                     slice(-self.shift_size, None))
@@ -432,7 +426,6 @@ class SwinTransformerBlock(nn.Module):
         # assert L == H * W, "input feature has wrong size"
 
         shortcut = x
-        x = self.norm1(x)
         x = x.view(B, H, W, C)
 
         # cyclic shift
@@ -447,9 +440,9 @@ class SwinTransformerBlock(nn.Module):
 
         # W-MSA/SW-MSA (to be compatible for testing on images whose shapes are the multiple of window size
         if self.input_resolution == x_size:
-            attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
+            attn_windows = self.attn(x_windows, mask=None)  # nW*B, window_size*window_size, C
         else:
-            attn_windows = self.attn(x_windows, mask=self.calculate_mask(x_size).to(x.device))
+            attn_windows = self.attn(x_windows, mask=None)
 
         # merge windows
         attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
@@ -462,28 +455,22 @@ class SwinTransformerBlock(nn.Module):
             x = shifted_x
         x = x.view(B, H * W, C)
 
-        # FFN
-        x = shortcut + self.drop_path(x)
-        x = x + self.drop_path(self.mlp(self.norm2(x)))
-
         return x
 
     def extra_repr(self) -> str:
         return f"dim={self.dim}, input_resolution={self.input_resolution}, num_heads={self.num_heads}, " \
-               f"window_size={self.window_size}, shift_size={self.shift_size}, mlp_ratio={self.mlp_ratio}"
+               f"window_size={self.window_size}, shift_size={self.shift_size}"
 
     def flops(self):
         flops = 0
         H, W = self.input_resolution
         # norm1
-        flops += self.dim * H * W
+        # flops += self.dim * H * W
         # W-MSA/SW-MSA
         nW = H * W / self.window_size / self.window_size
         flops += nW * self.attn.flops(self.window_size * self.window_size)
-        # mlp
-        flops += 2 * H * W * self.dim * self.dim * self.mlp_ratio
         # norm2
-        flops += self.dim * H * W
+        # flops += self.dim * H * W
         return flops
 
 
@@ -536,7 +523,7 @@ class PatchMerging(nn.Module):
         return flops
 
 
-class BasicLayer(nn.Module):
+class MixedBlock(nn.Module):
     """ A basic Swin Transformer layer for one stage.
 
     Args:
@@ -556,70 +543,111 @@ class BasicLayer(nn.Module):
         use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False.
     """
 
-    def __init__(self, dim, input_resolution, depth, num_heads, window_size,
-                 mlp_ratio=4., shifted_window=False, qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
-                 drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False):
+    def __init__(self, dim, input_resolution, num_heads, window_size, shift_size, keep_v=False, clustering=True, num_groups=16,
+                 relative_bias=False, mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
+                 drop_path=0., groupwindow_ratio=2, act_layer=nn.GELU, norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False):
 
         super().__init__()
         self.dim = dim
         self.input_resolution = input_resolution
-        self.depth = depth
         self.use_checkpoint = use_checkpoint
+        self.window_size = window_size
+        self.keep_v = keep_v
+        self.relative_bias = relative_bias
+        self.cluster_here = clustering
+        self.num_groups = num_groups
+        self.groupwindow_ratio = groupwindow_ratio
+        self.mlp_ratio = mlp_ratio
+        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+
+        self.norm1 = norm_layer(dim)
 
         # build blocks
-        if shifted_window:
-            self.blocks = nn.ModuleList([
-                SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
+        self.swin = SwinTransformerBlock(dim=dim//2, input_resolution=input_resolution,
                                     num_heads=num_heads, window_size=window_size,
-                                    shift_size=0 if (i % 2 == 0) else window_size // 2,
+                                    shift_size=shift_size,
                                     mlp_ratio=mlp_ratio,
                                     qkv_bias=qkv_bias, qk_scale=qk_scale,
                                     drop=drop, attn_drop=attn_drop,
                                     drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
                                     norm_layer=norm_layer)
-                for i in range(depth)])
-        else:
-            self.blocks = nn.ModuleList([
-                SwinTransformerBlock(dim=dim, input_resolution=input_resolution,
-                                    num_heads=num_heads, window_size=window_size,
-                                    shift_size=0,
-                                    mlp_ratio=mlp_ratio,
-                                    qkv_bias=qkv_bias, qk_scale=qk_scale,
-                                    drop=drop, attn_drop=attn_drop,
-                                    drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
-                                    norm_layer=norm_layer)
-                for i in range(depth)])
 
-        # patch merging layer
-        if downsample is not None:
-            self.downsample = downsample(input_resolution, dim=dim, norm_layer=norm_layer)
-        else:
-            self.downsample = None
 
-    def forward(self, x, x_size, **kwargs):
-        for i, blk in enumerate(self.blocks):
-            if self.use_checkpoint:
-                x = checkpoint.checkpoint(blk, x, x_size)
+        self.ica = ClusteredTransformerBlock(dim=dim//2, input_resolution=input_resolution,
+                            num_heads=num_heads, window_size=int(window_size*groupwindow_ratio), 
+                            keep_v=keep_v,
+                            clustering=clustering,
+                            relative_bias=relative_bias,
+                            num_groups=self.num_groups,
+                            shift_size=0,
+                            mlp_ratio=mlp_ratio,
+                            qkv_bias=qkv_bias, qk_scale=qk_scale,
+                            drop=drop, attn_drop=attn_drop,
+                            drop_path=drop_path[i] if isinstance(drop_path, list) else drop_path,
+                            norm_layer=norm_layer)
+
+        mlp_hidden_dim = int(dim * mlp_ratio)
+        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
+        if clustering:
+            self.gumbel_clustering = nn.Linear(in_features=dim//2, out_features=self.num_groups)
+
+    def forward(self, x, x_size, x_centers=None, labels=None, cnt_labels=None, **kwargs):
+        print_time = kwargs['print_time'] if 'print_time' in kwargs.keys() else False
+        imgsave_name = kwargs['imgsave_name'] if 'imgsave_name' in kwargs.keys() else None
+
+        H, W = x_size
+        B, L, C = x.shape
+        shortcut = x
+
+        x = self.norm1(x)
+
+        if self.cluster_here:
+            x_windows = x.reshape(B, H, W, C)
+            x_windows = window_partition(x_windows, self.window_size*self.groupwindow_ratio)  # nW*B, window_size, window_size, C
+            x_windows = x_windows.view(-1, self.window_size*self.groupwindow_ratio * self.window_size*self.groupwindow_ratio, C)  # nW*B, window_size*window_size, C
+            b = x_windows.shape[0]
+            assert x_centers is None
+            x_gumbels = self.gumbel_clustering(x_windows[..., C//2:])
+            if self.training:
+                x_gumbels = F.gumbel_softmax(x_gumbels, dim=-1, hard=True)
             else:
-                x = blk(x, x_size)
-                # print(i, x.size(), self.input_resolution)
-        if self.downsample is not None:
-            x = self.downsample(x)
-        return x
+                gumbel_index = x_gumbels.max(dim=-1, keepdim=True)[1]
+                x_gumbels = torch.zeros_like(x_windows).scatter_(-1, gumbel_index, 1.0)
+            _, labels = torch.max(x_gumbels, dim=-1)
+
+            x_centers = construct_centroid(self.num_groups, x_windows, labels)
+            label_ones = torch.ones_like(labels)
+            cnt_labels = torch.zeros(b, self.num_groups).type_as(labels)
+            cnt_labels.scatter_add_(dim=1, index=labels, src=label_ones)
+        else:
+            assert x_centers is not None
+
+        x[..., :C//2] = self.swin(x[..., :C//2], x_size)
+        x[..., C//2:] = self.ica(x[..., C//2:], x_size, x_centers=x_centers[..., C//2:], labels=labels, cnt_labels=cnt_labels, **kwargs)
+
+        if self.training:
+            x = shortcut + self.drop_path(x)
+            x = x + self.drop_path(self.mlp(x))
+        else:
+            x += shortcut
+            x += self.mlp(x)
+
+        return x, x_centers, labels, cnt_labels
 
     def extra_repr(self) -> str:
-        return f"dim={self.dim}, input_resolution={self.input_resolution}, depth={self.depth}"
+        return f"dim={self.dim}, input_resolution={self.input_resolution}, mlp_ratio={self.mlp_ratio}"
 
     def flops(self):
         flops = 0
-        for blk in self.blocks:
-            flops += blk.flops()
-        if self.downsample is not None:
-            flops += self.downsample.flops()
+        H, W = self.input_resolution
+        flops += self.dim * H * W
+        flops += self.swin.flops()
+        flops += self.ica.flops()
+        # mlp
+        flops += 2 * H * W * self.dim * self.dim * self.mlp_ratio
         return flops
 
-
-class BasicClusterLayer(nn.Module):
+class BasicMixedLayer(nn.Module):
     """ A basic Swin Transformer layer for one stage.
 
     Args:
@@ -640,8 +668,8 @@ class BasicClusterLayer(nn.Module):
     """
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size, keep_v=False, recycle=True, num_groups=16,
-                 relative_bias=False, mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
-                 drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False):
+                 relative_bias=False, mlp_ratio=4., shifted_window=False, qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
+                 drop_path=0., groupwindow_ratio=2, norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False):
 
         super().__init__()
         self.dim = dim
@@ -653,24 +681,22 @@ class BasicClusterLayer(nn.Module):
         self.relative_bias = relative_bias
         self.recycle = recycle
         self.num_groups = num_groups
-        mlp_hidden_dim = int(dim * mlp_ratio)
-        self.iic_clustering = SegmentationNet10aTwoHead()
-        state = torch.load('models/segmentation/model_544.pytorch')
-        self.iic_clustering.load_state_dict(state)
-        self.gumbel_clustering = Mlp(in_features=dim, hidden_features=dim, out_features=self.num_groups)
-
+        self.shifted_window = shifted_window
+        self.groupwindow_ratio = groupwindow_ratio
+        
         self.color_r = {0: 0 , 1: 157, 2: 255, 3: 190, 4: 224, 5: 73, 6: 164, 7: 255, 8: 247, 9: 47, 10:  68, 11: 163, 12: 27, 13:   0, 14:  49, 15: 178}
         self.color_g = {0: 0 , 1: 157, 2: 255, 3:  38, 4: 111, 5: 60, 6: 100, 7: 137, 8: 226, 9: 72, 10: 137, 11: 206, 12: 38, 13:  87, 14: 162, 15: 220}
         self.color_b = {0: 0 , 1: 157, 2: 255, 3:  51, 4: 139, 5: 43, 6:  34, 7:  49, 8: 107, 9: 78, 10:  26, 11:  39, 12: 50, 13: 132, 14: 262, 15: 239}
 
         # build blocks
         self.blocks = nn.ModuleList([
-            ClusteredTransformerBlock(dim=dim, input_resolution=input_resolution,
-                                num_heads=num_heads, window_size=window_size*2, 
+            MixedBlock(dim=dim, input_resolution=input_resolution,
+                                num_heads=num_heads, window_size=int(window_size), 
+                                shift_size=0 if (i % 2 == 0) else window_size // 2,
                                 keep_v=keep_v,
+                                clustering=True if (i == 0 or (not self.recycle)) else False,
                                 relative_bias=relative_bias,
                                 num_groups=self.num_groups,
-                                shift_size=0,
                                 mlp_ratio=mlp_ratio,
                                 qkv_bias=qkv_bias, qk_scale=qk_scale,
                                 drop=drop, attn_drop=attn_drop,
@@ -701,67 +727,30 @@ class BasicClusterLayer(nn.Module):
             timer_list = []
         else:
             timer_list = None
-        rgb_image = kwargs['image']
-        # gray_image = tf.to_tensor(tf.to_grayscale(tf.to_pil_image(x))).type_as(rgb_image)
-        # print(gray_image.shape)
-        gray_image = torch.sum(rgb_image * torch.Tensor([0.299, 0.587, 0.114]).type_as(rgb_image).view(1,3,1,1), dim=1, keepdim=True)
-        rgbl_image = torch.cat([rgb_image, gray_image], dim=1)
-        rgbl_image = rgbl_image.permute(0,2,3,1)
-        img_windows = window_partition(rgbl_image, self.window_size*2).permute(0,3,1,2)  # nt*B, token_length, C
-        # img_windows = img_windows.flatten(1,2)
-        
+
         H, W = x_size
         B, L, C = x.shape
-        x = x.reshape(B,H,W,C)
-        x_windows = window_partition(x, self.window_size*2)  # nt*B, token_length, C
-        x_windows = x_windows.flatten(1,2)
-        b, l, c = x_windows.shape
-        
-        for j, blk in enumerate(self.blocks):
-            timer_list = self.measure_time(msg=f'Block_{j}', timer_list=timer_list)
 
-            if j == 0  or (not self.recycle):
-                # x_centers, labels = self.clustering.fit(x_windows, enable_gradient=True)
-                if j == 0:
-                    img_gumbels = self.iic_clustering(img_windows, input_size=self.window_size*2)[0]
-                    img_gumbels = img_gumbels.permute(0,2,3,1).flatten(1,2)
-                    # x_gumbels = self.gumbel_clustering(x_windows)
+        if self.recycle:
+            for j, blk in enumerate(self.blocks):
+                timer_list = self.measure_time(msg=f'Block_{j}', timer_list=timer_list)
+                if self.use_checkpoint:
+                    x_centers = checkpoint.checkpoint(blk, x_centers, x_size)
                 else:
-                    with torch.no_grad():
-                        x_gumbels = self.gumbel_clustering(x_windows)
-                if self.training:
-                    x_gumbels = F.gumbel_softmax(x_gumbels, dim=-1, hard=True)
-                else:
-                    # gumbel_index = x_gumbels.max(dim=-1, keepdim=True)[1]
-                    gumbel_index = img_gumbels.max(dim=-1, keepdim=True)[1]
-                    x_gumbels = torch.zeros_like(x_windows).scatter_(-1, gumbel_index, 1.0)
-                _, labels = torch.max(x_gumbels, dim=-1)
-
-                x_centers = construct_centroid(self.num_groups, x_windows, labels)
-                label_ones = torch.ones_like(labels)
-                cnt_labels = torch.zeros(b, self.num_groups).type_as(labels)
-                cnt_labels.scatter_add_(dim=1, index=labels, src=label_ones)
-                
-            if self.use_checkpoint:
-                x_centers = checkpoint.checkpoint(blk, x_centers, x_size)
-            else:
-                x_windows = blk(x_centers, x_size, labels=labels, cnt_labels=cnt_labels, x_windows=x_windows)
-        
-        timer_list = self.measure_time(msg='window_partition', timer_list=timer_list)
-
-        if self.keep_v:
-            x = window_reverse(x_windows, self.window_size*2, H, W)
+                    if j == 0:
+                        x, x_centers, labels, cnt_labels = blk(x, x_size, **kwargs)
+                    else:
+                        x, _, _, _ = blk(x, x_size, x_centers=x_centers, labels=labels, cnt_labels=cnt_labels, **kwargs)
         else:
-            x = x_centers.gather(
-                dim=1,
-                index=labels.view(*labels.size(), 1).repeat(1, 1, c),
-            )
-            x = window_reverse(x, self.window_size*2, H, W)
-        
-        x = x.reshape(B,L,C)
+            for j, blk in enumerate(self.blocks):
+                timer_list = self.measure_time(msg=f'Block_{j}', timer_list=timer_list)
+                if self.use_checkpoint:
+                    x_centers = checkpoint.checkpoint(blk, x_centers, x_size)
+                else:
+                    x, _, _, _ = blk(x, x_size)
 
         if imgsave_name is not None:
-            my_labels = window_reverse(labels.view(-1, self.window_size*2, self.window_size*2, 1), self.window_size*2, H, W).squeeze(3).cpu().numpy()
+            my_labels = window_reverse(labels.view(-1, int(self.window_size*self.groupwindow_ratio), int(self.window_size*self.groupwindow_ratio), 1), int(self.window_size*self.groupwindow_ratio), H, W).squeeze(3).cpu().numpy()
             label_image_r = np.vectorize(self.color_r.get)(my_labels).astype('uint8')
             label_image_g = np.vectorize(self.color_g.get)(my_labels).astype('uint8')
             label_image_b = np.vectorize(self.color_b.get)(my_labels).astype('uint8')
@@ -787,90 +776,12 @@ class BasicClusterLayer(nn.Module):
 
     def flops(self):
         flops = 0
-        H, W = self.input_resolution
-        flops += H * W * self.dim * (self.dim + self.num_groups)
         for blk in self.blocks:
             flops += blk.flops()
         if self.downsample is not None:
             flops += self.downsample.flops()
         return flops
 
-
-class RSTB(nn.Module):
-    """Residual Swin Transformer Block (RSTB).
-
-    Args:
-        dim (int): Number of input channels.
-        input_resolution (tuple[int]): Input resolution.
-        depth (int): Number of blocks.
-        num_heads (int): Number of attention heads.
-        window_size (int): Local window size.
-        mlp_ratio (float): Ratio of mlp hidden dim to embedding dim.
-        qkv_bias (bool, optional): If True, add a learnable bias to query, key, value. Default: True
-        qk_scale (float | None, optional): Override default qk scale of head_dim ** -0.5 if set.
-        drop (float, optional): Dropout rate. Default: 0.0
-        attn_drop (float, optional): Attention dropout rate. Default: 0.0
-        drop_path (float | tuple[float], optional): Stochastic depth rate. Default: 0.0
-        norm_layer (nn.Module, optional): Normalization layer. Default: nn.LayerNorm
-        downsample (nn.Module | None, optional): Downsample layer at the end of the layer. Default: None
-        use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False.
-        img_size: Input image size.
-        patch_size: Patch size.
-        resi_connection: The convolutional block before residual connection.
-    """
-
-    def __init__(self, dim, input_resolution, depth, num_heads, window_size,
-                 mlp_ratio=4., shifted_window=False, qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
-                 drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False,
-                 img_size=224, patch_size=4, resi_connection='1conv'):
-        super(RSTB, self).__init__()
-
-        self.dim = dim
-        self.input_resolution = input_resolution
-
-        self.residual_group = BasicLayer(dim=dim,
-                                         input_resolution=input_resolution,
-                                         depth=depth,
-                                         num_heads=num_heads,
-                                         window_size=window_size,
-                                         mlp_ratio=mlp_ratio,
-                                         shifted_window=shifted_window,
-                                         qkv_bias=qkv_bias, qk_scale=qk_scale,
-                                         drop=drop, attn_drop=attn_drop,
-                                         drop_path=drop_path,
-                                         norm_layer=norm_layer,
-                                         downsample=downsample,
-                                         use_checkpoint=use_checkpoint)
-
-        if resi_connection == '1conv':
-            self.conv = nn.Conv2d(dim, dim, 3, 1, 1)
-        elif resi_connection == '3conv':
-            # to save parameters and memory
-            self.conv = nn.Sequential(nn.Conv2d(dim, dim // 4, 3, 1, 1), nn.LeakyReLU(negative_slope=0.2, inplace=True),
-                                    nn.Conv2d(dim // 4, dim // 4, 1, 1, 0),
-                                    nn.LeakyReLU(negative_slope=0.2, inplace=True),
-                                    nn.Conv2d(dim // 4, dim, 3, 1, 1))
-
-        self.patch_embed = PatchEmbed(
-            img_size=img_size, patch_size=patch_size, in_chans=0, embed_dim=dim,
-            norm_layer=None)
-
-        self.patch_unembed = PatchUnEmbed(
-            img_size=img_size, patch_size=patch_size, in_chans=0, embed_dim=dim,
-            norm_layer=None)
-
-    def forward(self, x, x_size, **kwargs):
-        return self.patch_embed(self.conv(self.patch_unembed(self.residual_group(x, x_size, **kwargs), x_size))) + x
-
-    def flops(self):
-        flops = 0
-        flops += self.residual_group.flops()
-        H, W = self.input_resolution
-        flops += H * W * self.dim * self.dim * 9
-        flops += self.patch_embed.flops()
-        flops += self.patch_unembed.flops()
-
-        return flops
 
 class RPCTB(nn.Module):
     """Residual Swin Transformer Block (RPXTB).
@@ -896,21 +807,22 @@ class RPCTB(nn.Module):
     """
 
     def __init__(self, dim, input_resolution, depth, num_heads, window_size, keep_v=False, recycle=True, num_groups=16,
-                 relative_bias=False, mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
-                 drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False,
+                 relative_bias=False, mlp_ratio=4., shifted_window=False, qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
+                 drop_path=0., norm_layer=nn.LayerNorm, downsample=None, use_checkpoint=False, groupwindow_ratio=2,
                  img_size=224, patch_size=4, resi_connection='1conv'):
         super(RPCTB, self).__init__()
 
         self.dim = dim
         self.input_resolution = input_resolution
 
-        self.residual_group = BasicClusterLayer(dim=dim,
+        self.residual_group = BasicMixedLayer(dim=dim,
                                          input_resolution=input_resolution,
                                          depth=depth,
                                          num_heads=num_heads,
                                          window_size=window_size,
                                          keep_v=keep_v,
                                          recycle=recycle,
+                                         shifted_window=shifted_window,
                                          num_groups=num_groups,
                                          relative_bias=relative_bias,
                                          mlp_ratio=mlp_ratio,
@@ -918,6 +830,7 @@ class RPCTB(nn.Module):
                                          drop=drop, attn_drop=attn_drop,
                                          drop_path=drop_path,
                                          norm_layer=norm_layer,
+                                         groupwindow_ratio=groupwindow_ratio,
                                          downsample=downsample,
                                          use_checkpoint=use_checkpoint,
                                          )
@@ -951,6 +864,7 @@ class RPCTB(nn.Module):
         flops += self.patch_unembed.flops()
 
         return flops
+
 
 class PatchEmbed(nn.Module):
     r""" Image to Patch Embedding
@@ -1105,9 +1019,9 @@ class SwinIR(nn.Module):
 
     def __init__(self, img_size=64, patch_size=1, in_chans=3,
                  embed_dim=96, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6], blocks=['RPCTB','RTB', 'RPCTB','RTB'], num_groups=16, 
-                 window_size=7, relative_bias=False, mlp_ratio=4., shifted_window=False, keep_v=False, recycle=True, qkv_bias=True, qk_scale=None,
+                 window_size=7, relative_bias=False, mlp_ratio=4., shifted_window='No', keep_v=False, recycle=True, qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1, norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
-                 use_checkpoint=False, upscale=2, img_range=1., upsampler='pixelshuffledirect', resi_connection='1conv'
+                 use_checkpoint=False, groupwindow_ratio=2, upscale=2, img_range=1., upsampler='pixelshuffledirect', resi_connection='1conv'
                  ):
         super(SwinIR, self).__init__()
         num_in_ch = in_chans
@@ -1122,6 +1036,7 @@ class SwinIR(nn.Module):
         self.upscale = upscale
         self.upsampler = upsampler
         self.window_size = window_size
+        self.groupwindow_ratio = groupwindow_ratio
         
         #####################################################################################################
         ################################### 1, shallow feature extraction ###################################
@@ -1179,10 +1094,12 @@ class SwinIR(nn.Module):
                          num_groups=num_groups,
                          relative_bias=relative_bias,
                          mlp_ratio=self.mlp_ratio,
+                         shifted_window=True if shifted_window=='Full' else False,
                          qkv_bias=qkv_bias, qk_scale=qk_scale,
                          drop=drop_rate, attn_drop=attn_drop_rate,
                          drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],  # no impact on SR results
                          norm_layer=norm_layer,
+                         groupwindow_ratio=groupwindow_ratio,
                          downsample=None,
                          use_checkpoint=use_checkpoint,
                          img_size=img_size,
@@ -1197,7 +1114,7 @@ class SwinIR(nn.Module):
                          num_heads=num_heads[i_layer],
                          window_size=window_size,
                          mlp_ratio=self.mlp_ratio,
-                         shifted_window=shifted_window,
+                         shifted_window=False if shifted_window=='No' else True,
                          qkv_bias=qkv_bias, qk_scale=qk_scale,
                          drop=drop_rate, attn_drop=attn_drop_rate,
                          drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],  # no impact on SR results
@@ -1272,8 +1189,8 @@ class SwinIR(nn.Module):
 
     def check_image_size(self, x):
         _, _, h, w = x.size()
-        mod_pad_h = (self.window_size*2 - h % (self.window_size*2)) % (self.window_size*2)
-        mod_pad_w = (self.window_size*2 - w % (self.window_size*2)) % (self.window_size*2)
+        mod_pad_h = (int(self.window_size*self.groupwindow_ratio) - h % int(self.window_size*self.groupwindow_ratio)) % int(self.window_size*self.groupwindow_ratio)
+        mod_pad_w = (int(self.window_size*self.groupwindow_ratio) - w % int(self.window_size*self.groupwindow_ratio)) % int(self.window_size*self.groupwindow_ratio)
         x = F.pad(x, (0, mod_pad_w, 0, mod_pad_h), 'reflect')
         return x
 
@@ -1294,7 +1211,7 @@ class SwinIR(nn.Module):
     def forward(self, x, **kwargs):
         H, W = x.shape[2:]
         x = self.check_image_size(x)
-        kwargs['image'] = x.clone()
+
         self.mean = self.mean.type_as(x)
         x = (x - self.mean) * self.img_range
 

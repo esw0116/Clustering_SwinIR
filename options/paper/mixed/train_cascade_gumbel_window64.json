@@ -32,21 +32,21 @@
   }
 
   , "netG": {
-    "net_type": "mixed" 
+    "net_type": "cascade" 
     , "upscale": 2                      // 2 | 3  | 4
     , "in_chans": 3 
     , "img_size": 64
     , "window_size": 8
-    , "groupwindow_ratio": 2
-    , "num_groups": 8
+    , "groupwindow_ratio": 8
+    , "num_groups": 16
     , "img_range": 1.0
-    , "depths": [6, 6, 6, 6]
-    , "blocks":["RPCTB","RPCTB","RPCTB","RPCTB"]
+    , "depths": [6, 6]
+    , "blocks":["RPCTB","RPCTB"]
     , "keep_v": true
     , "recycle": true
     , "shifted_window": "Half"
     , "embed_dim": 60 
-    , "num_heads": [6, 6, 6, 6]
+    , "num_heads": [6, 6]
     , "mlp_ratio": 2 
     , "upsampler": "pixelshuffledirect"        // "pixelshuffle" | "pixelshuffledirect" | "nearest+conv" | null
     , "resi_connection": "1conv"        // "1conv" | "3conv"

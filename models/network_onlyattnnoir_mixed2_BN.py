@@ -560,6 +560,8 @@ class MixedBlock(nn.Module):
         self.mlp_ratio = mlp_ratio
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
+        self.norm1 = nn.BatchNorm1d(dim)
+
         # build blocks
         self.swin = SwinTransformerBlock(dim=dim//2, input_resolution=input_resolution,
                                     num_heads=num_heads, window_size=window_size,
@@ -596,6 +598,10 @@ class MixedBlock(nn.Module):
         H, W = x_size
         B, L, C = x.shape
         shortcut = x
+
+        x = x.transpose(1,2)
+        x = self.norm1(x)
+        x = x.transpose(1,2)
 
         if self.cluster_here:
             x_windows = x.reshape(B, H, W, C)
@@ -636,6 +642,7 @@ class MixedBlock(nn.Module):
     def flops(self):
         flops = 0
         H, W = self.input_resolution
+        flops += self.dim * H * W
         flops += self.swin.flops()
         flops += self.ica.flops()
         # mlp
