@@ -13,7 +13,7 @@ import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
 from timm.models.layers import DropPath, to_2tuple, trunc_normal_
 
-import imageio
+import imageio, time
 
 
 class PWD(nn.Module):
@@ -158,7 +158,11 @@ class WindowAttention(nn.Module):
             relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
             self.register_buffer("relative_position_index", relative_position_index)
 
-        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias) # 96 -> 288
+        if self.keep_v:
+            self.qk = nn.Linear(dim, dim * 2, bias=qkv_bias) # 96 -> 192
+            self.v = nn.Linear(dim, dim * 1, bias=qkv_bias) # 96 -> 96
+        else:
+            self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias) # 96 -> 288
 
         self.attn_drop = nn.Dropout(attn_drop)
 
@@ -168,25 +172,55 @@ class WindowAttention(nn.Module):
         # trunc_normal_(self.relative_position_bias_table, std=.02)
         self.softmax = nn.Softmax(dim=-1)
 
-    def forward(self, x, mask=None, labels=None, cnt_labels=None, **kwargs):
+    def forward(self, x, mask=None, labels=None, cnt_labels=None, x_windows=None, **kwargs):
         """
         Args:
             x: input features with shape of (num_windows*B, N, C)
             mask: (0/-inf) mask with shape of (num_windows, Wh*Ww, Wh*Ww) or None
         """
 
-        B_, N, C = x.shape
-        qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4) # 3, 784, 6, 49, 16
-        q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple) # 784, 6, 49, 16
+        print_attn = kwargs['print_attn'] if 'print_attn' in kwargs.keys() else False
+        print_time = kwargs['print_time'] if 'print_time' in kwargs.keys() else False
 
-        q = q * self.scale
-        attn = (q @ k.transpose(-2, -1))
+        if print_time:
+            a = time.time()
+
+        if self.keep_v:
+            B_, N, C = x.shape  # N: number of groups
+            N_ = x_windows.shape[1] #: N_: number or pixels
+
+            qk = self.qk(x).reshape(B_, N, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+            q, k = qk[0], qk[1]  # make torchscript happy (cannot use tensor as tuple)
+
+            v = self.v(x_windows)
+            v = self.construct_centroid(N, v, labels)
+            v = v.reshape(B_, N, self.num_heads, C // self.num_heads).permute(0, 2, 1, 3)
+
+            if print_time:
+                b = time.time(); print('QKV:', b-a)
+            
+            q = q * self.scale
+            attn = (q @ k.transpose(-2, -1))
+
+            if print_time:
+                c = time.time(); print('Attn1:', c-b)
+
+        else:
+            B_, N, C = x.shape
+            qkv = self.qkv(x).reshape(B_, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4) # 3, 784, 6, 49, 16
+            q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple) # 784, 6, 49, 16
+
+            q = q * self.scale
+            attn = (q @ k.transpose(-2, -1))
 
         if self.relative_bias:
             relative_position_bias = self.relative_position_bias_table[self.relative_position_index.view(-1)].view(
                 self.window_size[0] * self.window_size[1], self.window_size[0] * self.window_size[1], -1)  # Wh*Ww,Wh*Ww,nH
             relative_position_bias = relative_position_bias.permute(2, 0, 1).contiguous()  # nH, Wh*Ww, Wh*Ww
             attn += relative_position_bias.unsqueeze(0).expand(B_, -1, -1, -1)
+
+        if print_time:
+            d = time.time(); print('AddBias:', d-c)
 
         if mask is not None:
             nW = mask.shape[0]
@@ -197,7 +231,22 @@ class WindowAttention(nn.Module):
         attn_ =  attn.permute(0,3,1,2)
         attn_[cnt_labels == 0] = -100
         attn = attn_.permute(0,2,3,1)
-        attn = self.softmax(attn)
+
+        if print_time:
+            e = time.time(); print('Mask:', e-d)
+
+        if self.keep_v:
+            maxes = torch.max(attn, -1, keepdim=True)[0]
+            attn_exp = torch.exp(attn-maxes)
+            attn_exp = attn_exp * cnt_labels.unsqueeze(1).unsqueeze(1)
+            attn_exp_sum = torch.sum(attn_exp, -1, keepdim=True)
+            attn = attn_exp / attn_exp_sum
+
+        else:
+            attn = self.softmax(attn)
+
+        if print_time:
+            f = time.time(); print('Softmax:', f-e)
 
         attn = self.attn_drop(attn)
         
@@ -205,12 +254,18 @@ class WindowAttention(nn.Module):
         x = self.proj(x)
         x = self.proj_drop(x)
 
+        if print_time:
+            g = time.time(); print('Attn2:', g-f)
+
         if self.keep_v:
             x = x.gather(
                 dim=1,
                 index=labels.view(*labels.size(), 1).repeat(1, 1, C),
             )
         
+        if print_time:
+            h = time.time(); print('Expand:', h-g)
+
         return x
 
     def construct_centroid(
@@ -253,7 +308,11 @@ class WindowAttention(nn.Module):
         # calculate flops for 1 window with token length of N
         flops = 0
         # qkv = self.qkv(x)
-        flops += N * self.dim * 3 * self.dim
+        if self.keep_v:
+            flops += N * self.dim * 2 * self.dim
+            flops += N_ * self.dim * self.dim
+        else:
+            flops += N * self.dim * 3 * self.dim
         # attn = (q @ k.transpose(-2, -1))
         flops += self.num_heads * N * (self.dim // self.num_heads) * N
         #  x = (attn @ v)
@@ -308,13 +367,42 @@ class ClusteredTransformerBlock(nn.Module):
             qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
 
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-        # self.norm2 = norm_layer(dim)
+        self.norm2 = norm_layer(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
         if clustering:
-            self.gumbel_clustering = nn.Linear(in_features=dim, out_features=self.num_groups)
+            self.gumbel_clustering = Mlp(in_features=dim, hidden_features=dim, out_features=self.num_groups)
+        
+        # if self.shift_size > 0:
+        #     attn_mask = self.calculate_mask(self.input_resolution)
+        # else:
+        #     attn_mask = None
 
+        # self.register_buffer("attn_mask", attn_mask)
+
+    def calculate_mask(self, x_size):
+        # calculate attention mask for SW-MSA
+        H, W = x_size
+        img_mask = torch.zeros((1, H, W, 1), device=torch.device('cpu'))  # 1 H W 1
+        h_slices = (slice(0, -self.window_size),
+                    slice(-self.window_size, -self.shift_size),
+                    slice(-self.shift_size, None))
+        w_slices = (slice(0, -self.window_size),
+                    slice(-self.window_size, -self.shift_size),
+                    slice(-self.shift_size, None))
+        cnt = 0
+        for h in h_slices:
+            for w in w_slices:
+                img_mask[:, h, w, :] = cnt
+                cnt += 1
+
+        mask_windows = window_partition(img_mask, self.window_size)  # nW, window_size, window_size, 1
+        mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
+        attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
+        attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(attn_mask == 0, float(0.0))
+
+        return attn_mask
 
     def forward(self, x, x_size, x_centers=None, labels=None, cnt_labels=None, **kwargs):
         print_time = kwargs['print_time'] if 'print_time' in kwargs.keys() else False
@@ -324,16 +412,8 @@ class ClusteredTransformerBlock(nn.Module):
         shortcut = x
 
         if print_time:
-            a = torch.cuda.Event(enable_timing=True)
-            bb = torch.cuda.Event(enable_timing=True)
-            c = torch.cuda.Event(enable_timing=True)
-            d = torch.cuda.Event(enable_timing=True)
-            e = torch.cuda.Event(enable_timing=True)
-
-            a.record()
+            a = time.time()
         x = self.norm1(x)
-        if print_time:
-            bb.record(); torch.cuda.synchronize(); print('LN1:', a.elapsed_time(bb))
 
         x = x.reshape(B, H, W, C)
         # # cyclic shift
@@ -347,6 +427,9 @@ class ClusteredTransformerBlock(nn.Module):
         x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # nW*B, window_size*window_size, C
         b = x_windows.shape[0]
 
+        if print_time:
+            bb = time.time(); print('LN1:', bb-a)
+        
         if self.cluster_here:
             assert x_centers is None
             x_gumbels = self.gumbel_clustering(x_windows)
@@ -365,11 +448,11 @@ class ClusteredTransformerBlock(nn.Module):
             assert x_centers is not None
 
         if print_time:
-            c.record(); torch.cuda.synchronize(); print('Gumbel:', bb.elapsed_time(c))
+            c = time.time(); print('Gumbel:', c-bb)
 
-        attn_windows = self.attn(x_centers, mask=None, labels=labels, cnt_labels=cnt_labels, **kwargs)  # nW*B, L, C
+        attn_windows = self.attn(x_centers, mask=None, labels=labels, cnt_labels=cnt_labels, x_windows=x_windows, **kwargs)  # nW*B, L, C
         if print_time:
-            d.record(); torch.cuda.synchronize(); print('MSA:', c.elapsed_time(d))
+            d = time.time(); print('MSA:', d-c)
 
         # # merge windows
         attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
@@ -383,14 +466,11 @@ class ClusteredTransformerBlock(nn.Module):
         x = x.view(B, H * W, C)
 
         # FFN
-        if self.training:
-            x = shortcut + self.drop_path(x)
-            x = x + self.drop_path(self.mlp(x))
-        else:
-            x += shortcut
-            x += self.mlp(x)
+        x = shortcut + self.drop_path(x)
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
+        # x = self.mlp(x)
         if print_time:
-            e.record(); torch.cuda.synchronize(); print('LN2:', d.elapsed_time(e))
+            e = time.time(); print('LN2:', e-d)
         return x, x_centers, labels, cnt_labels
 
 
@@ -405,14 +485,14 @@ class ClusteredTransformerBlock(nn.Module):
         flops += self.dim * H * W
         #gumbel softmax
         if self.cluster_here:
-            flops += H * W * self.dim *  self.num_groups
+            flops += H * W * self.dim * (self.dim + self.num_groups)
         # W-MSA/SW-MSA
         nW = H * W / self.window_size / self.window_size
         flops += nW * self.attn.flops(self.num_groups, self.window_size*self.window_size)
         # mlp
         flops += 2 * H * W * self.dim * self.dim * self.mlp_ratio
         # norm2
-        # flops += self.dim * H * W
+        flops += self.dim * H * W
         return flops
         
 
@@ -457,22 +537,22 @@ class SwinTransformerBlock(nn.Module):
             qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop, proj_drop=drop)
 
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-        # self.norm2 = norm_layer(dim)
+        self.norm2 = norm_layer(dim)
         mlp_hidden_dim = int(dim * mlp_ratio)
         self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
 
-        # if self.shift_size > 0:
-        #     # attn_mask = self.calculate_mask((368, 640))
-        #     attn_mask = self.calculate_mask(self.input_resolution)
-        # else:
-        #     attn_mask = None
+        if self.shift_size > 0:
+            # attn_mask = self.calculate_mask((368, 640))
+            attn_mask = self.calculate_mask(self.input_resolution)
+        else:
+            attn_mask = None
 
-        # self.register_buffer("attn_mask", attn_mask)
+        self.register_buffer("attn_mask", attn_mask)
 
     def calculate_mask(self, x_size):
         # calculate attention mask for SW-MSA
         H, W = x_size
-        img_mask = torch.zeros((1, H, W, 1), device=torch.device('cuda'))  # 1 H W 1
+        img_mask = torch.zeros((1, H, W, 1), device=torch.device('cpu'))  # 1 H W 1
         h_slices = (slice(0, -self.window_size),
                     slice(-self.window_size, -self.shift_size),
                     slice(-self.shift_size, None))
@@ -513,9 +593,9 @@ class SwinTransformerBlock(nn.Module):
 
         # W-MSA/SW-MSA (to be compatible for testing on images whose shapes are the multiple of window size
         if self.input_resolution == x_size:
-            attn_windows = self.attn(x_windows, mask=None)  # nW*B, window_size*window_size, C
+            attn_windows = self.attn(x_windows, mask=self.attn_mask)  # nW*B, window_size*window_size, C
         else:
-            attn_windows = self.attn(x_windows, mask=None)
+            attn_windows = self.attn(x_windows, mask=self.calculate_mask(x_size).to(x.device))
 
         # merge windows
         attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)
@@ -529,13 +609,9 @@ class SwinTransformerBlock(nn.Module):
         x = x.view(B, H * W, C)
 
         # FFN
-        if self.training:
-            x = shortcut + self.drop_path(x)
-            x = x + self.drop_path(self.mlp(x))
-        else:
-            x += shortcut
-            x += self.mlp(x)
-        
+        x = shortcut + self.drop_path(x)
+        x = x + self.drop_path(self.mlp(self.norm2(x)))
+
         return x
 
     def extra_repr(self) -> str:
@@ -553,7 +629,7 @@ class SwinTransformerBlock(nn.Module):
         # mlp
         flops += 2 * H * W * self.dim * self.dim * self.mlp_ratio
         # norm2
-        # flops += self.dim * H * W
+        flops += self.dim * H * W
         return flops
 
 
@@ -837,7 +913,6 @@ class BasicClusterLayer(nn.Module):
                     break
 
                 print(f'{msg}: {t.elapsed_time(timer_list[idx + 1][1])}')
-            print('done\n')
 
         return x
 
