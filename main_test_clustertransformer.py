@@ -279,7 +279,7 @@ def define_model(args):
             if 'too' in args.task:
                 from models.network_onlyattnnoir_gumbel_toosimple import SwinIR as net
             else:
-                from models.network_onlyattnnoir_gumbel_simple_inference import SwinIR as net
+                from models.network_onlyattnnoir_gumbel_simple import SwinIR as net
 
         if 'small' in args.task:
             block = ['RPCTB','RTB','RPCTB','RTB']

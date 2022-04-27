@@ -159,34 +159,6 @@ def define_G(opt, use_nsml):
                    upsampler=opt_net['upsampler'],
                    resi_connection=opt_net['resi_connection'])
 
-    elif net_type == 'varswinir':
-        from models.network_varswinir import SwinIR as net
-        netG = net(upscale=opt_net['upscale'],
-                   in_chans=opt_net['in_chans'],
-                   img_size=opt_net['img_size'],
-                   window_size=opt_net['window_size'],
-                   img_range=opt_net['img_range'],
-                   depths=opt_net['depths'],
-                   embed_dim=opt_net['embed_dim'],
-                   num_heads=opt_net['num_heads'],
-                   mlp_ratio=opt_net['mlp_ratio'],
-                   upsampler=opt_net['upsampler'],
-                   resi_connection=opt_net['resi_connection'])
-
-    elif net_type == 'varswinir2':
-        from models.network_varswinir2 import SwinIR as net
-        netG = net(upscale=opt_net['upscale'],
-                   in_chans=opt_net['in_chans'],
-                   img_size=opt_net['img_size'],
-                   window_size=opt_net['window_size'],
-                   img_range=opt_net['img_range'],
-                   depths=opt_net['depths'],
-                   embed_dim=opt_net['embed_dim'],
-                   num_heads=opt_net['num_heads'],
-                   mlp_ratio=opt_net['mlp_ratio'],
-                   upsampler=opt_net['upsampler'],
-                   resi_connection=opt_net['resi_connection'])
-
     # ----------------------------------------
     # SwinIR -- No shifted window version
     # ----------------------------------------
@@ -226,40 +198,6 @@ def define_G(opt, use_nsml):
     # ----------------------------------------
     elif net_type == 'blocknoswinir':
         from models.network_blocknoswinir import SwinIR as net
-        netG = net(upscale=opt_net['upscale'],
-                   in_chans=opt_net['in_chans'],
-                   img_size=opt_net['img_size'],
-                   window_size=opt_net['window_size'],
-                   img_range=opt_net['img_range'],
-                   depths=opt_net['depths'],
-                   embed_dim=opt_net['embed_dim'],
-                   num_heads=opt_net['num_heads'],
-                   mlp_ratio=opt_net['mlp_ratio'],
-                   upsampler=opt_net['upsampler'],
-                   resi_connection=opt_net['resi_connection'])
-
-    # ----------------------------------------
-    # SwinIR -- blocked window with channel reduction(half)
-    # ----------------------------------------
-    elif net_type == 'blockcompswinir':
-        from models.network_blockcompswinir import SwinIR as net
-        netG = net(upscale=opt_net['upscale'],
-                   in_chans=opt_net['in_chans'],
-                   img_size=opt_net['img_size'],
-                   window_size=opt_net['window_size'],
-                   img_range=opt_net['img_range'],
-                   depths=opt_net['depths'],
-                   embed_dim=opt_net['embed_dim'],
-                   num_heads=opt_net['num_heads'],
-                   mlp_ratio=opt_net['mlp_ratio'],
-                   upsampler=opt_net['upsampler'],
-                   resi_connection=opt_net['resi_connection'])
-
-    # ----------------------------------------
-    # SwinIR -- blocked window with channel reduction(half)
-    # ----------------------------------------
-    elif net_type == 'blockcompnoswinir2':
-        from models.network_blockcompnoswinir2 import SwinIR as net
         netG = net(upscale=opt_net['upscale'],
                    in_chans=opt_net['in_chans'],
                    img_size=opt_net['img_size'],
@@ -388,6 +326,27 @@ def define_G(opt, use_nsml):
                    resi_connection=opt_net['resi_connection'],
                    )
 
+    elif net_type == 'gumbel_simple2':
+        from models.network_onlyattnnoir_gumbel_simple2 import SwinIR as net
+        netG = net(upscale=opt_net['upscale'],
+                   in_chans=opt_net['in_chans'],
+                   img_size=opt_net['img_size'],
+                   window_size=opt_net['window_size'],
+                   groupwindow_ratio=opt_net['groupwindow_ratio'],
+                   img_range=opt_net['img_range'],
+                   keep_v=opt_net['keep_v'],
+                   recycle=opt_net['recycle'],
+                   num_groups=opt_net['num_groups'],
+                   depths=opt_net['depths'],
+                   blocks=opt_net['blocks'],
+                   embed_dim=opt_net['embed_dim'],
+                   num_heads=opt_net['num_heads'],
+                   mlp_ratio=opt_net['mlp_ratio'],
+                   shifted_window=opt_net['shifted_window'],
+                   upsampler=opt_net['upsampler'],
+                   resi_connection=opt_net['resi_connection'],
+                   )
+
     elif net_type == 'gumbel_toosimple':
         from models.network_onlyattnnoir_gumbel_toosimple import SwinIR as net
         netG = net(upscale=opt_net['upscale'],
@@ -410,48 +369,6 @@ def define_G(opt, use_nsml):
                    )
 
     elif net_type == 'mixed':
-        from models.network_onlyattnnoir_mixed_noLN import SwinIR as net
-        netG = net(upscale=opt_net['upscale'],
-                   in_chans=opt_net['in_chans'],
-                   img_size=opt_net['img_size'],
-                   window_size=opt_net['window_size'],
-                   groupwindow_ratio=opt_net['groupwindow_ratio'],
-                   img_range=opt_net['img_range'],
-                   keep_v=opt_net['keep_v'],
-                   recycle=opt_net['recycle'],
-                   num_groups=opt_net['num_groups'],
-                   depths=opt_net['depths'],
-                   blocks=opt_net['blocks'],
-                   embed_dim=opt_net['embed_dim'],
-                   num_heads=opt_net['num_heads'],
-                   mlp_ratio=opt_net['mlp_ratio'],
-                   shifted_window=opt_net['shifted_window'],
-                   upsampler=opt_net['upsampler'],
-                   resi_connection=opt_net['resi_connection'],
-                   )
-
-    elif net_type == 'mixed2':
-        from models.network_onlyattnnoir_mixed2_noLN import SwinIR as net
-        netG = net(upscale=opt_net['upscale'],
-                   in_chans=opt_net['in_chans'],
-                   img_size=opt_net['img_size'],
-                   window_size=opt_net['window_size'],
-                   groupwindow_ratio=opt_net['groupwindow_ratio'],
-                   img_range=opt_net['img_range'],
-                   keep_v=opt_net['keep_v'],
-                   recycle=opt_net['recycle'],
-                   num_groups=opt_net['num_groups'],
-                   depths=opt_net['depths'],
-                   blocks=opt_net['blocks'],
-                   embed_dim=opt_net['embed_dim'],
-                   num_heads=opt_net['num_heads'],
-                   mlp_ratio=opt_net['mlp_ratio'],
-                   shifted_window=opt_net['shifted_window'],
-                   upsampler=opt_net['upsampler'],
-                   resi_connection=opt_net['resi_connection'],
-                   )
-
-    elif net_type == 'mixed2_LN':
         from models.network_onlyattnnoir_mixed2 import SwinIR as net
         netG = net(upscale=opt_net['upscale'],
                    in_chans=opt_net['in_chans'],
@@ -472,49 +389,7 @@ def define_G(opt, use_nsml):
                    resi_connection=opt_net['resi_connection'],
                    )
 
-    elif net_type == 'mixed2_BN':
-        from models.network_onlyattnnoir_mixed2_BN import SwinIR as net
-        netG = net(upscale=opt_net['upscale'],
-                   in_chans=opt_net['in_chans'],
-                   img_size=opt_net['img_size'],
-                   window_size=opt_net['window_size'],
-                   groupwindow_ratio=opt_net['groupwindow_ratio'],
-                   img_range=opt_net['img_range'],
-                   keep_v=opt_net['keep_v'],
-                   recycle=opt_net['recycle'],
-                   num_groups=opt_net['num_groups'],
-                   depths=opt_net['depths'],
-                   blocks=opt_net['blocks'],
-                   embed_dim=opt_net['embed_dim'],
-                   num_heads=opt_net['num_heads'],
-                   mlp_ratio=opt_net['mlp_ratio'],
-                   shifted_window=opt_net['shifted_window'],
-                   upsampler=opt_net['upsampler'],
-                   resi_connection=opt_net['resi_connection'],
-                   )
-
     elif net_type == 'cascade':
-        from models.network_onlyattnnoir_cascade_noLN import SwinIR as net
-        netG = net(upscale=opt_net['upscale'],
-                   in_chans=opt_net['in_chans'],
-                   img_size=opt_net['img_size'],
-                   window_size=opt_net['window_size'],
-                   groupwindow_ratio=opt_net['groupwindow_ratio'],
-                   img_range=opt_net['img_range'],
-                   keep_v=opt_net['keep_v'],
-                   recycle=opt_net['recycle'],
-                   num_groups=opt_net['num_groups'],
-                   depths=opt_net['depths'],
-                   blocks=opt_net['blocks'],
-                   embed_dim=opt_net['embed_dim'],
-                   num_heads=opt_net['num_heads'],
-                   mlp_ratio=opt_net['mlp_ratio'],
-                   shifted_window=opt_net['shifted_window'],
-                   upsampler=opt_net['upsampler'],
-                   resi_connection=opt_net['resi_connection'],
-                   )
-
-    elif net_type == 'noLN':
         from models.network_onlyattnnoir_cascade_noLN import SwinIR as net
         netG = net(upscale=opt_net['upscale'],
                    in_chans=opt_net['in_chans'],
