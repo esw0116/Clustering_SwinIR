@@ -14,7 +14,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--task', type=str, default='color_dn', help='swin_sr, real_sr')
     parser.add_argument('--scale', type=int, default=2, help='scale factor: 1, 2, 3, 4, 8')
-    parser.add_argument('--model_path', type=str)
+    parser.add_argument('--model_path', type=str, default='')
     parser.add_argument('--benchmark', type=str, default=None, help='input low-quality test image folder')
     parser.add_argument('--folder_lq', type=str, default=None, help='input low-quality test image folder')
     parser.add_argument('--folder_gt', type=str, default=None, help='input ground-truth test image folder')
@@ -180,42 +180,6 @@ def define_model(args):
                     mlp_ratio=2, upsampler='pixelshuffledirect', resi_connection='1conv')
         param_key_g = 'params'
 
-    elif args.task in ['onlySA_sr', 'onlySA_shallow_sr', 'onlySA_tooshallow_sr', 'onlySA_short_sr', 'onlySA_tooshort_sr', 'onlySA_thin_sr', 'onlySA_toothin_sr',
-                'onlySA_no_sr', 'onlySA_shallow_no_sr', 'onlySA_tooshallow_no_sr', 'onlySA_short_no_sr', 'onlySA_tooshort_no_sr', 'onlySA_thin_no_sr', 'onlySA_toothin_no_sr']:
-        
-        if '_no_' in args.task:
-            from models.network_onlyattnnoir import SwinIR as net
-        else:
-            from models.network_onlyattnir import SwinIR as net
-        
-        if 'onlySA_shallow' in args.task:
-            dim = 48
-        elif 'onlySA_tooshallow' in args.task:
-            dim = 42
-        else:
-            dim=60
-        
-        if 'onlySA_short' in args.task:
-            depth = [6,6,6]
-            head = [6,6,6]
-        elif 'onlySA_tooshort' in args.task:
-            depth = [6,6]
-            head = [6,6]
-        elif 'onlySA_thin' in args.task:
-            depth = [4,4,4,4]
-            head = [6,6,6,6]
-        elif 'onlySA_toothin' in args.task:
-            depth = [3,3,3,3]
-            head = [6,6,6,6]
-        else:
-            depth = [6,6,6,6]
-            head = [6,6,6,6]
-        
-        model = net(upscale=args.scale, in_chans=3, img_size=64, window_size=8,
-                    img_range=1., depths=depth, embed_dim=dim, num_heads=head,
-                    mlp_ratio=2, upsampler='pixelshuffledirect', resi_connection='1conv')
-        param_key_g = 'params'
-
     elif args.task in ['kmeans_sr', 'kmeans_post_sr', 'kmeans_postkeepv_sr', 'kmeans_postkeepvnorecycle_sr', 'kmeans_last_sr', 'kmeans_postkeepv_bias_sr',
                         'kmeans_tooshort_sr', 'kmeans_tooshortkeepv_sr', 'kmeans_postkeepv_ws_sr', 
                         'gumbel_postkeepv_ws_sr', 'gumbel_postkeepvnorecycle_ws_sr', 'gumbel_postkeepv_sr', 'iic_postkeepv_ws_sr']:
@@ -269,7 +233,10 @@ def define_model(args):
         if args.task.startswith('kmeans'):
             from models.network_onlyattnnoir_kmeans_final import SwinIR as net
         elif args.task.startswith('gumbel'):
-            from models.network_onlyattnnoir_gumbel_final import SwinIR as net
+            if args.cpu:
+                from models.network_onlyattnnoir_gumbel_final_cpu import SwinIR as net
+            else:
+                from models.network_onlyattnnoir_gumbel_final import SwinIR as net
 
 
         if 'small' in args.task:
@@ -302,6 +269,82 @@ def define_model(args):
                  img_range=1., embed_dim=embed_dim, depths=depth, num_heads=head,
                  blocks=block, num_groups=8, keep_v=keepv, recycle=recycle, relative_bias=relative_bias, shifted_window=shift_window,
                  mlp_ratio=2., upsampler='pixelshuffledirect', resi_connection='1conv')
+        param_key_g = 'params'
+
+    elif args.task in ['kmeans_simple_small_yes', 'kmeans_simple_small_no', 'kmeans_simple_big_yes', 'kmeans_simple_big_no',
+                        'gumbel_simple_small_yes', 'gumbel_simple_small_no', 'gumbel_simple_big_yes', 'gumbel_simple_big_no', 'gumbel_toosimple_small_yes',]:
+        if args.task.startswith('kmeans'):
+            from models.network_onlyattnnoir_kmeans_simple import SwinIR as net
+        elif args.task.startswith('gumbel'):
+            if 'too' in args.task:
+                from models.network_onlyattnnoir_gumbel_toosimple import SwinIR as net
+            else:
+                from models.network_onlyattnnoir_gumbel_simple_inference import SwinIR as net
+
+        if 'small' in args.task:
+            block = ['RPCTB','RTB','RPCTB','RTB']
+            depth = [6,6,6,6]
+            head = [6,6,6,6]
+            embed_dim = 60
+        elif 'big' in args.task:
+            block = ['RPCTB','RPCTB','RTB','RPCTB','RPCTB','RTB']
+            depth = [6,6,6,6,6,6]
+            head = [6,6,6,6,6,6]
+            embed_dim = 180
+        else:
+            block=['RTB','RPCTB','RTB','RPCTB']
+            
+        keepv = True
+        shift_window = 'Half'
+
+        if args.task.endswith('no'):
+            recycle = False
+        else:
+            recycle = True
+        
+        if '_bias' in args.task:
+            relative_bias = True
+        else:
+            relative_bias = False
+
+        model = net(upscale=args.scale, img_size=64, in_chans=3, window_size=8,
+                 img_range=1., embed_dim=embed_dim, depths=depth, num_heads=head,
+                 blocks=block, num_groups=8, keep_v=keepv, recycle=recycle, relative_bias=relative_bias, shifted_window=shift_window,
+                 mlp_ratio=2., upsampler='pixelshuffledirect', resi_connection='1conv')
+        param_key_g = 'params'
+
+    elif args.task == 'mixed':
+        from models.network_onlyattnnoir_mixed2 import SwinIR as net
+        model = net(upscale=args.scale, img_size=64, in_chans=3, window_size=8, groupwindow_ratio=2,
+                        img_range=1., embed_dim=60, depths=[6,6,6,6], num_heads=[6,6,6,6],
+                        blocks=['RPCTB','RPCTB', 'RPCTB','RPCTB'], num_groups=8, keep_v=True, recycle=True, relative_bias=False, shifted_window='Half',
+                        mlp_ratio=2., upsampler='pixelshuffledirect', resi_connection='1conv')
+        param_key_g = 'params'
+
+    elif args.task in ['cascade', 'cascade32', 'cascade64']:
+        from models.network_onlyattnnoir_cascade_noLN import SwinIR as net
+        if args.task == 'cascade32':
+            gwr = 4
+            ng = 8
+        elif args.task == 'cascade64':
+            gwr = 8
+            ng = 16
+        else:
+            gwr = 2
+            ng = 8
+
+        model = net(upscale=args.scale, img_size=64, in_chans=3, window_size=8, groupwindow_ratio=gwr,
+                        img_range=1., embed_dim=60, depths=[6,6], num_heads=[6,6],
+                        blocks=['RPCTB','RPCTB'], num_groups=ng, keep_v=True, recycle=True, relative_bias=False, shifted_window='Half',
+                        mlp_ratio=2., upsampler='pixelshuffledirect', resi_connection='1conv')
+        param_key_g = 'params'
+
+    elif args.task == 'noln':
+        from models.network_onlyattnnoir_noLN import SwinIR as net
+        model = net(upscale=args.scale, img_size=64, in_chans=3, window_size=8, groupwindow_ratio=2,
+                        img_range=1., embed_dim=60, depths=[6,6,6,6], num_heads=[6,6,6,6],
+                        blocks=['RPCTB','RPCTB', 'RPCTB','RPCTB'], num_groups=8, keep_v=True, recycle=True, relative_bias=False, shifted_window='Half',
+                        mlp_ratio=2., upsampler='pixelshuffledirect', resi_connection='1conv')
         param_key_g = 'params'
 
     elif args.task == 'kmeans_normpost_sr':
@@ -349,16 +392,17 @@ def define_model(args):
                     mlp_ratio=2, upsampler='pixelshuffledirect', resi_connection='1conv')
         param_key_g = 'params'
 
-    pretrained_model = torch.load(args.model_path)
-    model_params = pretrained_model[param_key_g] if param_key_g in pretrained_model.keys() else pretrained_model
-    valid_model_params = {}
-    for k, v in model_params.items():
-        if k.endswith('attn_mask'):
-            pass
-        else:
-            valid_model_params[k] = v
+    if not args.model_path == '':
+        pretrained_model = torch.load(args.model_path)
+        model_params = pretrained_model[param_key_g] if param_key_g in pretrained_model.keys() else pretrained_model
+        valid_model_params = {}
+        for k, v in model_params.items():
+            if k.endswith('attn_mask'):
+                pass
+            else:
+                valid_model_params[k] = v
 
-    model.load_state_dict(valid_model_params, strict=False)
+        model.load_state_dict(valid_model_params, strict=False)
     return model
 
 

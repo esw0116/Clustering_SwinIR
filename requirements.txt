@@ -6,3 +6,4 @@ scikit-image
 pillow
 hdf5storage
 ninja
+thop
