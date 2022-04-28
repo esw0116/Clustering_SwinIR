@@ -1,11 +1,8 @@
 import torch
-# from models.network_onlyattnnoir_iic_blocks import SwinIR
 from models.network_onlyattnnoir_gumbel_simple import SwinIR
-# from models.network_varswinir2 import SwinIR
 
 def main():
-    net = SwinIR(window_size=8, embed_dim=60, mlp_ratio=2., upsampler='pixelshuffledirect', keep_v=True, recycle=True, shifted_window='Full')
-    # net = SwinIR(window_size=8, embed_dim=60, mlp_ratio=2., upsampler='pixelshuffledirect',)
+    net = SwinIR(window_size=8, embed_dim=60, mlp_ratio=2., upsampler='pixelshuffledirect', keep_v=True, recycle=True, shifted_window='Half', blocks=['RPCTB','RPCTB', 'RPCTB','RPCTB'])
     net.cuda()
     net.eval()
     print(net.flops())
