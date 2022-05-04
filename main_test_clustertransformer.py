@@ -313,14 +313,6 @@ def define_model(args):
                  mlp_ratio=2., upsampler='pixelshuffledirect', resi_connection='1conv')
         param_key_g = 'params'
 
-    elif args.task == 'mixed':
-        from models.network_onlyattnnoir_mixed2 import SwinIR as net
-        model = net(upscale=args.scale, img_size=64, in_chans=3, window_size=8, groupwindow_ratio=2,
-                        img_range=1., embed_dim=60, depths=[6,6,6,6], num_heads=[6,6,6,6],
-                        blocks=['RPCTB','RPCTB', 'RPCTB','RPCTB'], num_groups=8, keep_v=True, recycle=True, relative_bias=False, shifted_window='Half',
-                        mlp_ratio=2., upsampler='pixelshuffledirect', resi_connection='1conv')
-        param_key_g = 'params'
-
     elif args.task in ['cascade', 'cascade32', 'cascade64']:
         from models.network_onlyattnnoir_cascade_noLN import SwinIR as net
         if args.task == 'cascade32':
@@ -339,45 +331,30 @@ def define_model(args):
                         mlp_ratio=2., upsampler='pixelshuffledirect', resi_connection='1conv')
         param_key_g = 'params'
 
-    elif args.task == 'noln':
-        from models.network_onlyattnnoir_noLN import SwinIR as net
+    elif args.task == 'compensate1':
+        from models.network_onlyattnnoir_gumbel_compensate1_simple2 import SwinIR as net
         model = net(upscale=args.scale, img_size=64, in_chans=3, window_size=8, groupwindow_ratio=2,
                         img_range=1., embed_dim=60, depths=[6,6,6,6], num_heads=[6,6,6,6],
-                        blocks=['RPCTB','RPCTB', 'RPCTB','RPCTB'], num_groups=8, keep_v=True, recycle=True, relative_bias=False, shifted_window='Half',
+                        blocks=['RPCTB','RTB', 'RPCTB','RTB'], num_groups=8, keep_v=True, recycle=True, relative_bias=False, shifted_window='Half',
                         mlp_ratio=2., upsampler='pixelshuffledirect', resi_connection='1conv')
         param_key_g = 'params'
 
-    elif args.task == 'kmeans_normpost_sr':
-        from models.network_onlyattnnoir_kmeans_normblocks import SwinIR as net
-        model = net(upscale=args.scale, img_size=64, in_chans=3, window_size=8,
-                 img_range=1., embed_dim=60, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6],
-                 blocks=['RPCTB','RTB','RPCTB','RTB'], num_groups=16, keep_v=False, recycle=True,
-                 mlp_ratio=2., upsampler='pixelshuffledirect', resi_connection='1conv')
+    elif args.task == 'compensate2':
+        from models.network_onlyattnnoir_gumbel_compensate2_simple2 import SwinIR as net
+        model = net(upscale=args.scale, img_size=64, in_chans=3, window_size=8, groupwindow_ratio=2,
+                        img_range=1., embed_dim=60, depths=[6,6,6,6], num_heads=[6,6,6,6],
+                        blocks=['RPCTB','RTB', 'RPCTB','RTB'], num_groups=8, keep_v=True, recycle=True, relative_bias=False, shifted_window='Half',
+                        mlp_ratio=2., upsampler='pixelshuffledirect', resi_connection='1conv')
         param_key_g = 'params'
 
-    elif args.task == 'intrakmeans_post_sr':
-        from models.network_onlyattnnoir_intrakmeans_blocks import SwinIR as net
-        model = net(upscale=args.scale, img_size=64, in_chans=3, window_size=8,
-                 img_range=1., embed_dim=60, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6],
-                 blocks=['RPCTB','RTB','RPCTB','RTB'], num_groups=16, keep_v=False, recycle=True,
-                 mlp_ratio=2., upsampler='pixelshuffledirect', resi_connection='1conv')
+    elif args.task == 'compensate3':
+        from models.network_onlyattnnoir_gumbel_compensate3_simple2 import SwinIR as net
+        model = net(upscale=args.scale, img_size=64, in_chans=3, window_size=8, groupwindow_ratio=2,
+                        img_range=1., embed_dim=60, depths=[6,6,6,6], num_heads=[6,6,6,6],
+                        blocks=['RPCTB','RTB', 'RPCTB','RTB'], num_groups=8, keep_v=True, recycle=True, relative_bias=False, shifted_window='Half',
+                        mlp_ratio=2., upsampler='pixelshuffledirect', resi_connection='1conv')
         param_key_g = 'params'
 
-    elif args.task == 'halfkmeans_post_sr':
-        from models.network_onlyattnnoir_halfkmeans_blocks import SwinIR as net
-        model = net(upscale=args.scale, img_size=64, in_chans=3, window_size=8,
-                 img_range=1., embed_dim=60, depths=[6, 6, 6, 6], num_heads=[6, 6, 6, 6],
-                 blocks=['RPCTB','RTB','RPCTB','RTB'], num_groups=16, keep_v=False, recycle=True,
-                 mlp_ratio=2., upsampler='pixelshuffledirect', resi_connection='1conv')
-        param_key_g = 'params'
-
-    elif args.task == 'blockcluster_noswin_sr':
-        from models.network_blockcompnoswinir2 import SwinIR as net
-        model = net(upscale=args.scale, in_chans=3, img_size=64, window_size=8,
-                    img_range=1., depths=[6, 6, 6, 6], embed_dim=60, num_heads=[6, 6, 6, 6],
-                    mlp_ratio=2, upsampler='pixelshuffledirect', resi_connection='1conv')
-        param_key_g = 'params'
-    
     elif args.task == 'random_noswin_sr':
         from models.backup.network_onlyattnnoir_random_blocks import SwinIR as net
         model = net(upscale=args.scale, in_chans=3, img_size=64, window_size=8,
@@ -402,7 +379,7 @@ def define_model(args):
             else:
                 valid_model_params[k] = v
 
-        model.load_state_dict(valid_model_params, strict=False)
+        model.load_state_dict(valid_model_params, strict=True)
     return model
 
 
