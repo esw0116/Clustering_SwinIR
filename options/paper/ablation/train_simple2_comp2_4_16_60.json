@@ -32,13 +32,13 @@
   }
 
   , "netG": {
-    "net_type": "gumbel_simple" 
+    "net_type": "gumbel_simple2_comp2" 
     , "upscale": 2                      // 2 | 3  | 4
     , "in_chans": 3 
     , "img_size": 64
     , "window_size": 8
     , "groupwindow_ratio": 2
-    , "num_groups": 8
+    , "num_groups": 4
     , "img_range": 1.0
     , "depths": [6, 6, 6, 6]
     , "blocks":["RPCTB","RTB","RPCTB","RTB"]

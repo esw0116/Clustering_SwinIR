@@ -33,15 +33,15 @@ class DatasetSR(data.Dataset):
                 self.paths_H = util.get_image_paths(os.path.join(DATASET_PATH, 'train/DIV2K/bin/DIV2K_train_HR'))
                 self.paths_L = util.get_image_paths(os.path.join(DATASET_PATH, 'train/DIV2K/bin/DIV2K_train_LR_bicubic', 'X{}'.format(str(opt['scale']))))
             else:
-                self.paths_H = util.get_image_paths(os.path.join(DATASET_PATH, 'train/benchmark/Set5/HR'))
-                self.paths_L = util.get_image_paths(os.path.join(DATASET_PATH, 'train/benchmark/Set5/LR_bicubic', 'X{}'.format(str(opt['scale']))))
+                self.paths_H = util.get_image_paths(os.path.join(DATASET_PATH, 'train/benchmark/Urban100/HR'))
+                self.paths_L = util.get_image_paths(os.path.join(DATASET_PATH, 'train/benchmark/Urban100/LR_bicubic', 'X{}'.format(str(opt['scale']))))
         else:
             if self.opt['phase'] == 'train':
                 self.paths_H = util.get_image_paths(os.path.join('dataset/DIV2K/bin/DIV2K_train_HR'))
                 self.paths_L = util.get_image_paths(os.path.join('dataset/DIV2K/bin/DIV2K_train_LR_bicubic', 'X{}'.format(str(opt['scale']))))
             else:
-                self.paths_H = util.get_image_paths(os.path.join('dataset/benchmark/Set5/HR'))
-                self.paths_L = util.get_image_paths(os.path.join('dataset/benchmark/Set5/LR_bicubic', 'X{}'.format(str(opt['scale']))))
+                self.paths_H = util.get_image_paths(os.path.join('dataset/benchmark/Urban100/HR'))
+                self.paths_L = util.get_image_paths(os.path.join('dataset/benchmark/Urban100/LR_bicubic', 'X{}'.format(str(opt['scale']))))
         assert self.paths_H, 'Error: H path is empty.'
         if self.paths_L and self.paths_H:
             assert len(self.paths_L) == len(self.paths_H), 'L/H mismatch - {}, {}.'.format(len(self.paths_L), len(self.paths_H))

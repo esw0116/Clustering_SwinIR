@@ -5,7 +5,6 @@ kernels/
 nsmltrained_models/
 testsets/
 scale2/
-S2/
 models/segmentation/
 models/backup/
 options/existingswinir/

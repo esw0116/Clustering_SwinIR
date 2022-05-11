@@ -32,12 +32,12 @@
   }
 
   , "netG": {
-    "net_type": "gumbel_final" 
+    "net_type": "gumbel_simple2_comp2" 
     , "upscale": 2                      // 2 | 3  | 4
     , "in_chans": 3 
     , "img_size": 64
     , "window_size": 8
-    , "groupwindow_ratio": 4
+    , "groupwindow_ratio": 2
     , "num_groups": 8
     , "img_range": 1.0
     , "depths": [6, 6, 6, 6]
@@ -45,7 +45,7 @@
     , "keep_v": true
     , "recycle": true
     , "shifted_window": "Half"
-    , "embed_dim": 60 
+    , "embed_dim": 30 
     , "num_heads": [6, 6, 6, 6]
     , "mlp_ratio": 2 
     , "upsampler": "pixelshuffledirect"        // "pixelshuffle" | "pixelshuffledirect" | "nearest+conv" | null

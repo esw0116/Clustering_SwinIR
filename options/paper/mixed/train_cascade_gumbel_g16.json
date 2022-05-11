@@ -4,12 +4,12 @@
   , "gpu_ids": [0,1,2,3]
   , "dist": true
 
-  , "scale": 4       // 2 | 3 | 4
+  , "scale": 2       // 2 | 3 | 4
   , "n_channels": 3  // broadcast to "datasets", 1 for grayscale, 3 for color
 
   , "path": {
     "root": "superresolution"            // "denoising" | "superresolution" | "dejpeg"
-    , "pretrained_netG": "./S2/KR80934_CVLAB_SR_504/250000/model/G.pth"      // path of pretrained model. We fine-tune X3/X4 models from X2 model, so that `G_optimizer_lr` and `G_scheduler_milestones` can be halved to save time.
+    , "pretrained_netG": null      // path of pretrained model. We fine-tune X3/X4 models from X2 model, so that `G_optimizer_lr` and `G_scheduler_milestones` can be halved to save time.
     , "pretrained_netE": null      // path of pretrained model
   }
 
@@ -32,20 +32,21 @@
   }
 
   , "netG": {
-    "net_type": "gumbel_final" 
-    , "upscale": 4                      // 2 | 3  | 4
+    "net_type": "cascade" 
+    , "upscale": 2                      // 2 | 3  | 4
     , "in_chans": 3 
     , "img_size": 64
     , "window_size": 8
+    , "groupwindow_ratio": 4
     , "num_groups": 16
     , "img_range": 1.0
-    , "depths": [6, 6, 6, 6]
-    , "blocks":["RPCTB","RTB","RPCTB","RTB"]
+    , "depths": [6, 6]
+    , "blocks":["RPCTB","RPCTB"]
     , "keep_v": true
     , "recycle": true
     , "shifted_window": "Half"
     , "embed_dim": 60 
-    , "num_heads": [6, 6, 6, 6]
+    , "num_heads": [6, 6]
     , "mlp_ratio": 2 
     , "upsampler": "pixelshuffledirect"        // "pixelshuffle" | "pixelshuffledirect" | "nearest+conv" | null
     , "resi_connection": "1conv"        // "1conv" | "3conv"
@@ -60,24 +61,24 @@
     , "E_decay": 0.999                  // Exponential Moving Average for netG: set 0 to disable; default setting 0.999
 
     , "G_optimizer_type": "adam"        // fixed, adam is enough
-    , "G_optimizer_lr": 2e-4            // learning rate
+    , "G_optimizer_lr": 4e-4            // learning rate
     , "G_optimizer_wd": 0               // weight decay, default 0
     , "G_optimizer_clipgrad": null      // unused
     , "G_optimizer_reuse": true         // 
 
     , "G_scheduler_type": "MultiStepLR" // "MultiStepLR" is enough
-    , "G_scheduler_milestones": [62500, 100000, 112500, 118750, 125000]
+    , "G_scheduler_milestones": [125000, 200000, 225000, 237500, 250000]
     , "G_scheduler_gamma": 0.5
 
     , "G_regularizer_orthstep": null    // unused
     , "G_regularizer_clipstep": null    // unused
 
-    , "G_param_strict": false
+    , "G_param_strict": true
     , "E_param_strict": true
 
     , "checkpoint_test": 2500           // for testing
     , "checkpoint_save": 5000           // for saving model
     , "checkpoint_print": 250           // for print
-    , "total_iters": 125000             // total iterations for training
+    , "total_iters": 250000             // total iterations for training
   }
 }

@@ -2,7 +2,7 @@ from collections import OrderedDict
 import torch
 import torch.nn as nn
 from torch.optim import lr_scheduler
-from torch.optim import Adam
+from torch.optim import Adam, AdamW
 
 from models.select_network import define_G
 from models.model_base import ModelBase
@@ -111,7 +111,11 @@ class ModelPlain(ModelBase):
                 G_optim_params.append(v)
             else:
                 print('Params [{:s}] will not optimize.'.format(k))
-        self.G_optimizer = Adam(G_optim_params, lr=self.opt_train['G_optimizer_lr'], weight_decay=0)
+        
+        if self.opt_train['G_optimizer_type'] == 'adamw':
+            self.G_optimizer = AdamW(G_optim_params, lr=self.opt_train['G_optimizer_lr'], weight_decay=self.opt_train['G_optimizer_wd'])
+        else:
+            self.G_optimizer = Adam(G_optim_params, lr=self.opt_train['G_optimizer_lr'], weight_decay=0)
 
     # ----------------------------------------
     # define scheduler, only "MultiStepLR"
