@@ -1,11 +1,11 @@
 # python main_test_clustertransformer.py --benchmark div2k --task swin_sr --model_path nsmltrained_models/KR80934_CVLAB_SR_54/250000/model/G.pth --scale 2
-python main_test_clustertransformer.py --benchmark div2k --task gumbel_simple_small_yes --model_path nsmltrained_models/KR80934_CVLAB_SR2_23/250000/model/G.pth
+# python main_test_clustertransformer.py --benchmark Set5 --task gumbel_simple_small_yes --model_path nsmltrained_models/KR80934_CVLAB_SR2_23/250000/model/G.pth
 # python main_test_clustertransformer.py --benchmark div2k --task gumbel_toosimple_small_yes --model_path nsmltrained_models/KR80934_CVLAB_SR2_26/250000/model/G.pth
-# python main_test_clustertransformer.py --benchmark div2k --task mixed --model_path nsmltrained_models/KR80934_CVLAB_SR2_51/125000/model/G.pth
-# python main_test_clustertransformer.py --benchmark Urban100 --task cascade --model_path nsmltrained_models/KR80934_CVLAB_SR2_30/250000/model/G.pth
-# python main_test_clustertransformer.py --benchmark Urban100 --task cascade32 --model_path nsmltrained_models/KR80934_CVLAB_SR2_39/250000/model/G.pth
-# python main_test_clustertransformer.py --benchmark Urban100 --task cascade64 --model_path nsmltrained_models/KR80934_CVLAB_SR2_37/250000/model/G.pth
-# python main_test_clustertransformer.py --benchmark div2k --task noln --model_path nsmltrained_models/KR80934_CVLAB_SR2_31/250000/model/G.pth
+
+# python main_test_clustertransformer.py --benchmark Set5 --task gumbel_simple_small_yes --model_path nsmltrained_models/KR80934_CVLAB_SR2_23/250000/model/G.pth
+# python main_test_clustertransformer.py --benchmark div2k --task compensate1 --model_path nsmltrained_models/KR80934_CVLAB_SR2_65/250000/model/G.pth
+python main_test_clustertransformer.py --benchmark div2k --task compensate2 --model_path nsmltrained_models/KR80934_CVLAB_SR2_66/250000/model/G.pth
+# python main_test_clustertransformer.py --benchmark div2k --task compensate3 --model_path nsmltrained_models/KR80934_CVLAB_SR2_68/210000/model/G.pth
 
 
 ### Old One

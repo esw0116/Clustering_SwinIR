@@ -1,3 +1,5 @@
+## Code optimization target
+models/network_onlyattnnoir_gumbel_compensate2_simple2.py
 
 ## Measure test result / time of ICASR and SwinIR
 
