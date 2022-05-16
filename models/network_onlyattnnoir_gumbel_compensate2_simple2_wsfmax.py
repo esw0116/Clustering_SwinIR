@@ -199,11 +199,14 @@ class WindowAttention(nn.Module):
         attn = attn_.permute(0,2,3,1)
         
         maxes = torch.max(attn, -1, keepdim=True)[0]
-        attn_exp = torch.exp(attn-maxes)
-        attn_exp = attn_exp * cnt_labels.unsqueeze(1).unsqueeze(1)
-        attn_exp_sum = torch.sum(attn_exp, -1, keepdim=True)
-        attn = attn_exp / attn_exp_sum
-
+        if self.keep_v:
+            attn_exp = torch.exp(attn-maxes)
+            attn_exp = attn_exp * cnt_labels.unsqueeze(1).unsqueeze(1)
+            attn_exp_sum = torch.sum(attn_exp, -1, keepdim=True)
+            attn = attn_exp / attn_exp_sum
+        else:
+            attn = self.softmax(attn)
+            
         attn = self.attn_drop(attn)
         
         x = (attn @ v).transpose(1, 2).reshape(B_, N, C)

@@ -4,6 +4,7 @@ matlab/
 kernels/
 nsmltrained_models/
 testsets/
+test_image/
 scale2/
 models/segmentation/
 models/backup/
